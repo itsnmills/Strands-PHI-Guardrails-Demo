@@ -1,0 +1,1711 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Strands PHI Guardrails — Healthcare AI Security Demo</title>
+  <meta name="description" content="HIPAA-compliant AI agent with deterministic guardrails — RBAC, PHI detection, BAA enforcement, audit logging. Built with Strands Agents SDK." />
+
+  <!-- Fonts -->
+  <link href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&f[]=jet-brains-mono@400,500&display=swap" rel="stylesheet" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+
+  <style>
+    /* ── Design tokens ─────────────────────────────────────── */
+    :root {
+      --font-body: 'General Sans', 'Inter', system-ui, sans-serif;
+      --font-mono: 'DM Mono', 'JetBrains Mono', monospace;
+
+      --text-xs:   clamp(0.75rem,  0.7rem  + 0.25vw, 0.8125rem);
+      --text-sm:   clamp(0.8125rem, 0.75rem + 0.3vw, 0.875rem);
+      --text-base: clamp(0.875rem,  0.8rem  + 0.3vw, 0.9375rem);
+      --text-md:   clamp(1rem,      0.9rem  + 0.4vw, 1.125rem);
+      --text-lg:   clamp(1.125rem,  1rem    + 0.5vw, 1.375rem);
+      --text-xl:   clamp(1.375rem,  1.1rem  + 1vw,   1.75rem);
+
+      --space-1: 0.25rem;
+      --space-2: 0.5rem;
+      --space-3: 0.75rem;
+      --space-4: 1rem;
+      --space-5: 1.25rem;
+      --space-6: 1.5rem;
+      --space-8: 2rem;
+      --space-10: 2.5rem;
+      --space-12: 3rem;
+
+      --radius-sm: 0.375rem;
+      --radius-md: 0.5rem;
+      --radius-lg: 0.75rem;
+      --radius-xl: 1rem;
+      --radius-full: 9999px;
+
+      --transition: 160ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    /* ── Dark palette (default) — clinical navy × electric teal ── */
+    [data-theme="dark"], :root {
+      --bg:           #080c14;
+      --surface:      #0d1220;
+      --surface-2:    #111827;
+      --surface-3:    #162033;
+      --border:       #1e2d45;
+      --border-subtle:#172038;
+      --divider:      #1a2540;
+
+      --text:         #e8edf5;
+      --text-muted:   #7a90b0;
+      --text-faint:   #3d5070;
+      --text-inverse: #080c14;
+
+      --primary:       #00c2cc;
+      --primary-hover: #00a8b3;
+      --primary-dim:   rgba(0,194,204,0.12);
+      --primary-glow:  rgba(0,194,204,0.25);
+
+      --success:        #22c55e;
+      --success-bg:     rgba(34,197,94,0.08);
+      --success-border: rgba(34,197,94,0.2);
+
+      --danger:        #f43f5e;
+      --danger-bg:     rgba(244,63,94,0.08);
+      --danger-border: rgba(244,63,94,0.2);
+
+      --warning:       #f59e0b;
+      --warning-bg:    rgba(245,158,11,0.08);
+      --warning-border:rgba(245,158,11,0.2);
+
+      --info:          #3b82f6;
+      --info-bg:       rgba(59,130,246,0.08);
+      --info-border:   rgba(59,130,246,0.2);
+
+      --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
+      --shadow-md: 0 4px 16px rgba(0,0,0,0.5);
+      --shadow-lg: 0 8px 32px rgba(0,0,0,0.6);
+      --glow-primary: 0 0 20px rgba(0,194,204,0.15);
+    }
+
+    /* ── Light palette ─────────────────────────────────── */
+    [data-theme="light"] {
+      --bg:           #f0f4f8;
+      --surface:      #ffffff;
+      --surface-2:    #f7f9fc;
+      --surface-3:    #eef2f7;
+      --border:       #d1dce8;
+      --border-subtle:#e2eaf3;
+      --divider:      #dce6f0;
+
+      --text:         #0f1f35;
+      --text-muted:   #4a6080;
+      --text-faint:   #8aa0bc;
+      --text-inverse: #ffffff;
+
+      --primary:       #0098a3;
+      --primary-hover: #007a85;
+      --primary-dim:   rgba(0,152,163,0.1);
+      --primary-glow:  rgba(0,152,163,0.2);
+
+      --success:        #16a34a;
+      --success-bg:     rgba(22,163,74,0.07);
+      --success-border: rgba(22,163,74,0.2);
+
+      --danger:        #e11d48;
+      --danger-bg:     rgba(225,29,72,0.06);
+      --danger-border: rgba(225,29,72,0.18);
+
+      --warning:       #d97706;
+      --warning-bg:    rgba(217,119,6,0.07);
+      --warning-border:rgba(217,119,6,0.2);
+
+      --info:          #2563eb;
+      --info-bg:       rgba(37,99,235,0.07);
+      --info-border:   rgba(37,99,235,0.18);
+
+      --shadow-sm: 0 1px 3px rgba(0,40,80,0.08);
+      --shadow-md: 0 4px 16px rgba(0,40,80,0.1);
+      --shadow-lg: 0 8px 32px rgba(0,40,80,0.13);
+      --glow-primary: 0 0 20px rgba(0,152,163,0.12);
+    }
+
+    /* ── Base reset ─────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { height: 100%; overflow: hidden; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+    body {
+      height: 100dvh; overflow: hidden;
+      font-family: var(--font-body);
+      font-size: var(--text-base);
+      color: var(--text);
+      background: var(--bg);
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      grid-template-rows: 52px 1fr;
+    }
+    button { cursor: pointer; border: none; background: none; font: inherit; color: inherit; }
+    input, select, textarea { font: inherit; color: inherit; }
+    a { color: inherit; text-decoration: none; }
+
+    /* ── Scrollbar ──────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
+
+    /* ── Header ─────────────────────────────────────────── */
+    #header {
+      grid-column: 1 / -1;
+      display: flex; align-items: center; gap: var(--space-4);
+      padding: 0 var(--space-5);
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      z-index: 50;
+    }
+    .logo {
+      display: flex; align-items: center; gap: var(--space-2);
+      font-size: var(--text-md); font-weight: 700; letter-spacing: -0.02em;
+      color: var(--text);
+    }
+    .logo svg { color: var(--primary); }
+    .logo-sub {
+      font-size: var(--text-xs); font-weight: 500;
+      color: var(--text-muted);
+      padding: 2px 8px;
+      border-radius: var(--radius-full);
+      background: var(--primary-dim);
+      color: var(--primary);
+      border: 1px solid rgba(0,194,204,0.2);
+    }
+    .header-spacer { flex: 1; }
+    .header-meta {
+      display: flex; align-items: center; gap: var(--space-3);
+      font-size: var(--text-xs); color: var(--text-muted);
+    }
+    .header-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 6px var(--success);
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .btn-icon {
+      width: 32px; height: 32px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: var(--radius-md);
+      color: var(--text-muted);
+      transition: var(--transition);
+    }
+    .btn-icon:hover { background: var(--surface-3); color: var(--text); }
+
+    /* ── Sidebar ─────────────────────────────────────────── */
+    #sidebar {
+      grid-row: 2;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      padding: var(--space-5) 0;
+      display: flex; flex-direction: column; gap: 0;
+    }
+    .sidebar-section { padding: var(--space-3) var(--space-5); }
+    .sidebar-label {
+      font-size: var(--text-xs); font-weight: 600;
+      color: var(--text-faint); letter-spacing: 0.08em; text-transform: uppercase;
+      margin-bottom: var(--space-2);
+    }
+
+    /* Role selector */
+    .role-card {
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: var(--space-3) var(--space-4);
+      cursor: pointer;
+      transition: var(--transition);
+      position: relative; overflow: hidden;
+    }
+    .role-card::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: linear-gradient(135deg, var(--primary-dim), transparent);
+      opacity: 0; transition: var(--transition);
+    }
+    .role-card:hover::before { opacity: 1; }
+    .role-card:hover { border-color: var(--primary); }
+    .role-card.active {
+      border-color: var(--primary);
+      background: var(--primary-dim);
+    }
+    .role-card.active::before { opacity: 1; }
+    .role-name { font-size: var(--text-sm); font-weight: 600; }
+    .role-desc { font-size: var(--text-xs); color: var(--text-muted); margin-top: 2px; line-height: 1.4; }
+    .role-badges {
+      display: flex; flex-wrap: wrap; gap: 4px; margin-top: var(--space-2);
+    }
+    .cap-badge {
+      font-size: 10px; font-weight: 600; padding: 1px 6px;
+      border-radius: var(--radius-full);
+    }
+    .cap-yes { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); }
+    .cap-no  { background: var(--danger-bg);  color: var(--danger);  border: 1px solid var(--danger-border); }
+
+    .sidebar-divider { height: 1px; background: var(--divider); margin: var(--space-3) var(--space-5); }
+
+    /* Purpose selector */
+    .purpose-select-wrap { position: relative; }
+    .purpose-select {
+      width: 100%;
+      appearance: none;
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: var(--space-2) var(--space-3);
+      padding-right: var(--space-8);
+      font-size: var(--text-sm);
+      color: var(--text);
+      cursor: pointer;
+      transition: var(--transition);
+    }
+    .purpose-select:hover { border-color: var(--primary); }
+    .purpose-select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-dim); }
+    .purpose-select-icon {
+      position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+      pointer-events: none; color: var(--text-muted);
+    }
+    .justification-input {
+      width: 100%; margin-top: var(--space-2);
+      background: var(--surface-3); border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: var(--space-2) var(--space-3);
+      font-size: var(--text-xs); color: var(--text);
+      resize: none; line-height: 1.5;
+      transition: var(--transition);
+    }
+    .justification-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-dim); }
+    .justification-input::placeholder { color: var(--text-faint); }
+
+    /* Reference tables */
+    .ref-table { width: 100%; font-size: var(--text-xs); border-collapse: collapse; }
+    .ref-table td { padding: 3px 0; vertical-align: top; }
+    .ref-table td:first-child { color: var(--text-muted); width: 36px; }
+    .sensitivity-dot {
+      display: inline-block; width: 7px; height: 7px;
+      border-radius: 50%; margin-right: 4px;
+      vertical-align: middle;
+    }
+    .dot-standard { background: var(--success); }
+    .dot-sensitive { background: var(--warning); }
+    .dot-restricted { background: var(--danger); }
+
+    /* ── Main area ──────────────────────────────────────── */
+    #main {
+      grid-row: 2;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding: var(--space-5) var(--space-6);
+      display: flex; flex-direction: column; gap: var(--space-5);
+      background-image: radial-gradient(circle, var(--border-subtle) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+
+    /* Scenarios */
+    .section-header {
+      display: flex; align-items: center; gap: var(--space-2);
+      font-size: 11px; font-weight: 700; color: var(--text-faint);
+      letter-spacing: 0.1em; text-transform: uppercase;
+      margin-bottom: var(--space-3);
+    }
+    .section-header .line {
+      flex: 1; height: 1px; background: var(--divider);
+    }
+    .section-header .scen-counts {
+      display: flex; gap: var(--space-2); margin-left: var(--space-1);
+    }
+    .scen-count-chip {
+      font-size: 10px; font-weight: 700; padding: 1px 7px;
+      border-radius: var(--radius-full);
+      letter-spacing: 0.03em;
+    }
+    .scen-count-chip.allowed { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); }
+    .scen-count-chip.blocked { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); }
+    .scen-count-chip.edge { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-border); }
+    .scenario-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: var(--space-2);
+    }
+    .scenario-btn {
+      display: flex; align-items: flex-start; gap: var(--space-2);
+      padding: var(--space-3) var(--space-3);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      text-align: left;
+      font-size: var(--text-xs);
+      line-height: 1.4;
+      color: var(--text);
+      transition: var(--transition);
+      cursor: pointer;
+      position: relative; overflow: hidden;
+    }
+    .scenario-btn:hover { border-color: var(--primary); background: var(--surface-2); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+    .scenario-btn.active { border-color: var(--primary); background: var(--primary-dim); box-shadow: var(--glow-primary); }
+    .scenario-btn .scen-icon { flex-shrink: 0; width: 18px; height: 18px; margin-top: 1px; }
+    .scenario-btn.allowed .scen-icon { color: var(--success); }
+    .scenario-btn.blocked .scen-icon { color: var(--danger); }
+    .scenario-btn.edge .scen-icon { color: var(--warning); }
+    .scen-label { font-weight: 600; display: block; margin-bottom: 2px; }
+    .scen-desc { color: var(--text-muted); font-size: 10px; }
+
+    /* ── 3-col workspace ────────────────────────────────── */
+    .workspace {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: var(--space-4);
+      flex: 1;
+      min-height: 0;
+    }
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-xl);
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+    .panel-header {
+      display: flex; align-items: center; gap: var(--space-2);
+      padding: var(--space-4) var(--space-5);
+      border-bottom: 1px solid var(--divider);
+      flex-shrink: 0;
+    }
+    .panel-title {
+      font-size: var(--text-sm); font-weight: 700;
+      color: var(--text); letter-spacing: -0.01em;
+    }
+    .panel-badge {
+      font-size: 10px; font-weight: 600; padding: 2px 7px;
+      border-radius: var(--radius-full);
+      background: var(--surface-3); color: var(--text-muted);
+      border: 1px solid var(--border);
+      margin-left: auto;
+    }
+    .panel-body {
+      flex: 1; overflow-y: auto; overscroll-behavior: contain;
+      padding: var(--space-4) var(--space-5);
+      display: flex; flex-direction: column; gap: var(--space-3);
+    }
+
+    /* ── Request panel ──────────────────────────────────── */
+    .session-badges {
+      display: flex; flex-wrap: wrap; gap: var(--space-2);
+    }
+    .session-badge {
+      display: flex; align-items: center; gap: 5px;
+      font-size: var(--text-xs); font-weight: 600;
+      padding: 4px 10px; border-radius: var(--radius-full);
+      border: 1px solid;
+    }
+    .badge-role { background: rgba(59,130,246,0.08); color: var(--info); border-color: var(--info-border); }
+    .badge-purpose { background: rgba(168,85,247,0.08); color: #a855f7; border-color: rgba(168,85,247,0.2); }
+
+    .prompt-textarea {
+      width: 100%;
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: var(--space-3) var(--space-4);
+      font-size: var(--text-sm);
+      color: var(--text);
+      resize: none;
+      min-height: 100px;
+      line-height: 1.6;
+      transition: var(--transition);
+    }
+    .prompt-textarea:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-dim); }
+    .prompt-textarea::placeholder { color: var(--text-faint); }
+
+    .btn-run {
+      display: flex; align-items: center; justify-content: center; gap: var(--space-2);
+      width: 100%; padding: var(--space-3);
+      background: var(--primary);
+      color: var(--text-inverse);
+      font-size: var(--text-sm); font-weight: 700;
+      border-radius: var(--radius-lg);
+      transition: var(--transition);
+      position: relative; overflow: hidden;
+    }
+    .btn-run::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+      transform: translateX(-100%);
+      transition: transform 0.4s;
+    }
+    .btn-run:hover { background: var(--primary-hover); box-shadow: var(--glow-primary); }
+    .btn-run:hover::before { transform: translateX(100%); }
+    .btn-run:active { transform: scale(0.98); }
+    .btn-run.running { cursor: wait; background: var(--primary-hover); }
+    .btn-run.running::after {
+      content: '';
+      position: absolute; inset: 0;
+      background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.12) 50%, transparent 100%);
+      animation: shimmer 1.2s ease-in-out infinite;
+    }
+    @keyframes shimmer {
+      from { transform: translateX(-100%); }
+      to { transform: translateX(100%); }
+    }
+
+    .btn-clear {
+      display: flex; align-items: center; justify-content: center; gap: var(--space-2);
+      padding: var(--space-3);
+      flex: 1;
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      font-size: var(--text-sm); font-weight: 600;
+      border-radius: var(--radius-lg);
+      transition: var(--transition);
+      color: var(--text-muted);
+    }
+    .btn-clear:hover { border-color: var(--danger-border); color: var(--danger); background: var(--danger-bg); }
+
+    .btn-row { display: flex; gap: var(--space-2); }
+
+    /* Response box */
+    .response-box {
+      border-radius: var(--radius-lg);
+      padding: var(--space-4);
+      font-size: var(--text-sm);
+      line-height: 1.6;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      position: relative;
+      animation: fadeIn 0.2s ease;
+    }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+    .response-box.success { border-color: var(--success-border); background: var(--success-bg); }
+    .response-box.danger  { border-color: var(--danger-border);  background: var(--danger-bg); }
+    .response-box.warning { border-color: var(--warning-border); background: var(--warning-bg); }
+    .response-label {
+      display: flex; align-items: center; gap: var(--space-2);
+      font-size: var(--text-xs); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+      margin-bottom: var(--space-2);
+    }
+    .response-label.success { color: var(--success); }
+    .response-label.danger  { color: var(--danger); }
+    .response-label.warning { color: var(--warning); }
+    .response-text { color: var(--text); }
+
+    /* Spinner */
+    .spinner {
+      display: inline-block; width: 16px; height: 16px;
+      border: 2px solid var(--primary-dim);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Control hierarchy */
+    .control-list { display: flex; flex-direction: column; gap: var(--space-1); }
+    .control-item {
+      display: flex; align-items: center; gap: var(--space-2);
+      font-size: var(--text-xs); padding: 5px var(--space-3);
+      border-radius: var(--radius-md);
+      border: 1px solid transparent;
+      transition: var(--transition);
+    }
+    .control-item.triggered {
+      background: var(--danger-bg);
+      border-color: var(--danger-border);
+      color: var(--danger);
+    }
+    .control-item .ctrl-num {
+      font-family: var(--font-mono);
+      font-size: 10px; font-weight: 500;
+      width: 18px; height: 18px;
+      border-radius: var(--radius-full);
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; color: var(--text-muted);
+    }
+    .control-item.triggered .ctrl-num { background: var(--danger-bg); border-color: var(--danger-border); color: var(--danger); }
+    .control-item .ctrl-label { color: var(--text-muted); }
+    .control-item.triggered .ctrl-label { color: var(--danger); font-weight: 600; }
+
+    /* ── Guardrail panel ────────────────────────────────── */
+    .guardrail-event {
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+      overflow: hidden;
+      animation: slideIn 0.25s ease;
+    }
+    @keyframes slideIn { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
+    .guardrail-event.blocked { border-color: var(--danger-border); }
+    .guardrail-event.allowed { border-color: var(--success-border); }
+    .guardrail-event.warning { border-color: var(--warning-border); }
+
+    .ge-header {
+      display: flex; align-items: center; gap: var(--space-2);
+      padding: var(--space-3) var(--space-4);
+      cursor: pointer;
+      user-select: none;
+    }
+    .ge-header.blocked { background: var(--danger-bg); }
+    .ge-header.allowed { background: var(--success-bg); }
+    .ge-header.warning { background: var(--warning-bg); }
+
+    .ge-icon { width: 20px; height: 20px; flex-shrink: 0; }
+    .ge-icon.blocked { color: var(--danger); }
+    .ge-icon.allowed { color: var(--success); }
+    .ge-icon.warning { color: var(--warning); }
+
+    .ge-title { font-size: var(--text-sm); font-weight: 700; flex: 1; }
+    .ge-title.blocked { color: var(--danger); }
+    .ge-title.allowed { color: var(--success); }
+    .ge-title.warning { color: var(--warning); }
+
+    .ge-chevron { color: var(--text-muted); transition: transform var(--transition); }
+    .ge-chevron.open { transform: rotate(180deg); }
+
+    .ge-body {
+      padding: var(--space-3) var(--space-4);
+      border-top: 1px solid var(--border);
+      display: none;
+      flex-direction: column; gap: var(--space-2);
+      background: var(--surface-2);
+    }
+    .ge-body.open { display: flex; }
+    .ge-row { display: flex; flex-direction: column; gap: 2px; }
+    .ge-row-label { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
+    .ge-row-val { font-size: var(--text-xs); color: var(--text); }
+    .ge-chip {
+      display: inline-flex; align-items: center;
+      font-family: var(--font-mono); font-size: 11px;
+      background: var(--surface-3); border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 1px 6px;
+    }
+    .ge-reason {
+      font-size: var(--text-xs); line-height: 1.5;
+      padding: var(--space-2) var(--space-3);
+      border-radius: var(--radius-md);
+      margin-top: var(--space-1);
+    }
+    .ge-reason.blocked { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); }
+    .ge-reason.allowed { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); }
+    .ge-reason.warning { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-border); }
+
+    /* Risk score bar */
+    .risk-meter { margin-top: var(--space-1); }
+    .risk-label { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-faint); margin-bottom: 4px; }
+    .risk-track { height: 4px; background: var(--surface-3); border-radius: 99px; overflow: hidden; }
+    .risk-fill { height: 100%; border-radius: 99px; transition: width 0.6s cubic-bezier(0.16,1,0.3,1); }
+    .risk-fill.high { background: var(--danger); }
+    .risk-fill.med  { background: var(--warning); }
+    .risk-fill.low  { background: var(--success); }
+
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: var(--space-3); padding: var(--space-10);
+      color: var(--text-faint); text-align: center;
+    }
+    .empty-state svg { color: var(--border); }
+    .empty-state p { font-size: var(--text-xs); line-height: 1.6; max-width: 200px; }
+
+    /* ── Audit panel ────────────────────────────────────── */
+    .audit-metrics {
+      display: grid; grid-template-columns: 1fr 1fr 1fr;
+      gap: var(--space-2);
+    }
+    .audit-metric {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: var(--space-3);
+      text-align: center;
+    }
+    .audit-metric-val {
+      font-size: var(--text-lg); font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+    .audit-metric-val.success { color: var(--success); }
+    .audit-metric-val.danger  { color: var(--danger); }
+    .audit-metric-val.neutral { color: var(--text); }
+    .audit-metric-label { font-size: 10px; color: var(--text-faint); margin-top: 4px; letter-spacing: 0.04em; text-transform: uppercase; }
+
+    .audit-entries { display: flex; flex-direction: column; gap: var(--space-2); }
+    .audit-entry {
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+      overflow: hidden;
+      cursor: pointer;
+      transition: var(--transition);
+      animation: fadeIn 0.2s ease;
+    }
+    .audit-entry:hover { border-color: var(--text-faint); }
+    .audit-entry-head {
+      display: flex; align-items: center; gap: var(--space-2);
+      padding: var(--space-2) var(--space-3);
+    }
+    .audit-entry-head.success { background: var(--success-bg); }
+    .audit-entry-head.danger  { background: var(--danger-bg); }
+    .audit-entry-head.warning { background: var(--warning-bg); }
+    .audit-outcome-dot {
+      width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+    }
+    .audit-outcome-dot.success { background: var(--success); }
+    .audit-outcome-dot.danger  { background: var(--danger); }
+    .audit-outcome-dot.warning { background: var(--warning); }
+    .audit-entry-tool {
+      font-size: var(--text-xs); font-weight: 600;
+      font-family: var(--font-mono); flex: 1;
+      color: var(--text);
+    }
+    .audit-entry-ts { font-size: 10px; color: var(--text-faint); font-family: var(--font-mono); }
+    .audit-entry-body {
+      padding: var(--space-2) var(--space-3);
+      border-top: 1px solid var(--border);
+      display: none;
+      background: var(--surface-2);
+    }
+    .audit-entry-body.open { display: block; }
+    .audit-kv { display: flex; gap: var(--space-2); font-size: 10px; padding: 2px 0; }
+    .audit-kv-key { color: var(--text-faint); width: 80px; flex-shrink: 0; }
+    .audit-kv-val { color: var(--text-muted); font-family: var(--font-mono); }
+    .audit-kv-val.danger { color: var(--danger); }
+
+    /* ── HIPAA ref panel (collapsible bottom) ───────────── */
+    .hipaa-ref-bar {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-xl);
+      padding: var(--space-3) var(--space-5);
+      display: flex; align-items: center; gap: var(--space-6);
+      flex-wrap: wrap;
+      flex-shrink: 0;
+      position: relative;
+      overflow: hidden;
+    }
+    .hipaa-ref-bar::before {
+      content: '';
+      position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+      background: linear-gradient(to bottom, var(--primary), var(--info));
+      border-radius: 3px 0 0 3px;
+    }
+    .hipaa-ref-group { display: flex; flex-direction: column; gap: var(--space-1); }
+    .hipaa-ref-title { font-size: 10px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.06em; }
+    .hipaa-ref-items { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+    .hipaa-chip {
+      font-size: 10px; font-weight: 600; padding: 2px 9px;
+      border-radius: var(--radius-full);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      background: var(--surface-2);
+      transition: var(--transition);
+    }
+    .hipaa-chip:hover { border-color: var(--primary); color: var(--primary); }
+    .hipaa-chip.yes { border-color: var(--success-border); color: var(--success); background: var(--success-bg); }
+    .hipaa-chip.no  { border-color: var(--danger-border);  color: var(--danger);  background: var(--danger-bg); }
+    .hipaa-chip.warn { border-color: var(--warning-border); color: var(--warning); background: var(--warning-bg); }
+
+    /* ── Eval runner ────────────────────────────────────── */
+    .eval-section { border-top: 1px solid var(--divider); padding-top: var(--space-4); }
+    .eval-controls { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); }
+    .btn-eval {
+      display: flex; align-items: center; gap: var(--space-2);
+      padding: var(--space-2) var(--space-4);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--primary);
+      color: var(--primary);
+      font-size: var(--text-xs); font-weight: 600;
+      background: var(--primary-dim);
+      transition: var(--transition);
+    }
+    .btn-eval:hover { background: var(--primary); color: var(--text-inverse); }
+    .eval-results { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+    .eval-case {
+      padding: var(--space-3);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+      font-size: 10px; line-height: 1.5;
+      background: var(--surface-2);
+    }
+    .eval-case.pass { border-color: var(--success-border); }
+    .eval-case.fail { border-color: var(--danger-border); }
+    .eval-case-id { font-family: var(--font-mono); font-weight: 600; }
+    .eval-case-desc { color: var(--text-muted); }
+    .eval-case-outcome { font-weight: 700; margin-top: 4px; }
+    .eval-case.pass .eval-case-outcome { color: var(--success); }
+    .eval-case.fail .eval-case-outcome { color: var(--danger); }
+
+    /* ── Responsive tweaks ──────────────────────────────── */
+    @media (max-width: 1100px) {
+      body { grid-template-columns: 220px 1fr; }
+      .workspace { grid-template-columns: 1fr 1fr; }
+    }
+
+    /* ── Risk score meter ───────────────────────────────── */
+    .risk-meter-wrap {
+      padding: var(--space-3) var(--space-4);
+      background: var(--surface-3);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+      margin-top: var(--space-2);
+    }
+    .risk-meter-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: var(--space-2);
+      font-size: 10px;
+    }
+    .risk-meter-label { font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+    .risk-score-val { font-family: var(--font-mono); font-weight: 700; font-size: var(--text-sm); }
+    .risk-score-val.low { color: var(--success); }
+    .risk-score-val.med { color: var(--warning); }
+    .risk-score-val.high { color: var(--danger); }
+    .risk-bar-track {
+      height: 6px; border-radius: 3px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+    .risk-bar-fill {
+      height: 100%; border-radius: 3px;
+      transition: width 0.5s cubic-bezier(0.16,1,0.3,1);
+    }
+    .risk-bar-fill.low  { background: linear-gradient(90deg, var(--success), #4ade80); }
+    .risk-bar-fill.med  { background: linear-gradient(90deg, var(--warning), #fbbf24); }
+    .risk-bar-fill.high { background: linear-gradient(90deg, var(--danger), #fb7185); }
+    .risk-ticks {
+      display: flex; justify-content: space-between;
+      margin-top: 3px; padding: 0 1px;
+      font-size: 9px; color: var(--text-faint); font-family: var(--font-mono);
+    }
+
+    /* ── Guardrail count badge per run ──────────────────── */
+    .run-divider {
+      display: flex; align-items: center; gap: var(--space-2);
+      font-size: 10px; color: var(--text-faint); padding: var(--space-1) 0;
+    }
+    .run-divider::before, .run-divider::after {
+      content: ''; flex: 1; height: 1px; background: var(--divider);
+    }
+
+    /* ── Animations ─────────────────────────────────────── */
+    .fade-enter { animation: fadeIn 0.2s ease; }
+  </style>
+</head>
+<body>
+
+<!-- ── HEADER ──────────────────────────────────────────────── -->
+<header id="header">
+  <!-- SVG Logo -->
+  <div class="logo">
+    <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-label="Strands PHI Guardrails logo">
+      <rect x="2" y="2" width="24" height="24" rx="6" fill="currentColor" fill-opacity="0.08" stroke="currentColor" stroke-width="1.5"/>
+      <path d="M9 14h10M14 9v10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="14" cy="14" r="4" stroke="currentColor" stroke-width="1.5" fill="none"/>
+      <path d="M8.5 8.5l3 3M16.5 16.5l3 3M19.5 8.5l-3 3M8.5 19.5l3-3" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+    </svg>
+    <span>Strands PHI Guardrails</span>
+    <span class="logo-sub">v2.0</span>
+  </div>
+
+  <div class="header-spacer"></div>
+
+  <div class="header-meta">
+    <div class="header-dot"></div>
+    <span>Demo active</span>
+    <span style="color:var(--border)">·</span>
+    <span>Simulated data only</span>
+    <span style="color:var(--border)">·</span>
+    <span>Strands Agents SDK</span>
+  </div>
+
+  <button class="btn-icon" data-theme-toggle aria-label="Toggle theme" title="Toggle light/dark mode">
+    <i data-lucide="moon" style="width:16px;height:16px"></i>
+  </button>
+  <a href="https://github.com/itsnmills/Strands-PHI-Guardrails-Demo" target="_blank" class="btn-icon" title="View on GitHub" aria-label="GitHub repository">
+    <i data-lucide="github" style="width:16px;height:16px"></i>
+  </a>
+</header>
+
+<!-- ── SIDEBAR ─────────────────────────────────────────────── -->
+<aside id="sidebar">
+
+  <div class="sidebar-section">
+    <div class="sidebar-label">Clinical Role</div>
+    <div id="role-list" style="display:flex;flex-direction:column;gap:var(--space-2)"></div>
+  </div>
+
+  <div class="sidebar-divider"></div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-label">Purpose of Use</div>
+    <div class="purpose-select-wrap">
+      <select class="purpose-select" id="purpose-select">
+        <option value="TREATMENT">Treatment — Direct Patient Care</option>
+        <option value="PAYMENT">Payment — Billing &amp; Claims</option>
+        <option value="OPERATIONS">Healthcare Operations</option>
+        <option value="RESEARCH">Research (IRB)</option>
+        <option value="HANDOFF">Care Transition / Handoff</option>
+        <option value="AUDIT">Compliance Audit</option>
+      </select>
+      <i data-lucide="chevron-down" class="purpose-select-icon" style="width:14px;height:14px"></i>
+    </div>
+    <textarea id="justification-input" class="justification-input" rows="2"
+      placeholder="Justification (required for some purposes)…"></textarea>
+    <div id="pou-note" style="font-size:10px;color:var(--text-faint);margin-top:4px;line-height:1.4;"></div>
+  </div>
+
+  <div class="sidebar-divider"></div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-label">Patient Reference</div>
+    <table class="ref-table">
+      <tbody>
+        <tr><td>P001</td><td><span class="sensitivity-dot dot-standard"></span>Jane Doe — <span style="color:var(--success);font-weight:600">STANDARD</span></td></tr>
+        <tr><td>P002</td><td><span class="sensitivity-dot dot-sensitive"></span>John Smith — <span style="color:var(--warning);font-weight:600">SENSITIVE</span></td></tr>
+        <tr><td>P003</td><td><span class="sensitivity-dot dot-restricted"></span>Sarah Connor — <span style="color:var(--danger);font-weight:600">RESTRICTED</span></td></tr>
+        <tr><td>P004</td><td><span class="sensitivity-dot dot-standard"></span>Robert Chen — <span style="color:var(--success);font-weight:600">STANDARD</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="sidebar-divider"></div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-label">BAA Vendors</div>
+    <table class="ref-table">
+      <tbody>
+        <tr><td style="color:var(--success)">✓</td><td style="font-family:var(--font-mono);font-size:10px">epic-systems</td></tr>
+        <tr><td style="color:var(--success)">✓</td><td style="font-family:var(--font-mono);font-size:10px">aws-bedrock</td></tr>
+        <tr><td style="color:var(--success)">✓</td><td style="font-family:var(--font-mono);font-size:10px">change-healthcare</td></tr>
+        <tr><td style="color:var(--success)">✓</td><td style="font-family:var(--font-mono);font-size:10px">azure-openai</td></tr>
+        <tr><td style="color:var(--danger)">✗</td><td style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted)">slack, discord, gmail…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div style="flex:1"></div>
+  <div style="padding:var(--space-4) var(--space-5);font-size:10px;color:var(--text-faint);line-height:1.5;">
+    Built by <strong style="color:var(--text-muted)">Noah Mills</strong><br/>
+    Healthcare AI Security Portfolio
+  </div>
+
+</aside>
+
+<!-- ── MAIN ─────────────────────────────────────────────────── -->
+<main id="main">
+
+  <!-- Scenarios -->
+  <div>
+    <div class="section-header">
+      <i data-lucide="zap" style="width:13px;height:13px"></i>
+      <span>Demo Scenarios</span>
+      <div class="scen-counts">
+        <span class="scen-count-chip allowed">4 Allowed</span>
+        <span class="scen-count-chip blocked">6 Blocked</span>
+        <span class="scen-count-chip edge">1 Edge</span>
+      </div>
+      <div class="line"></div>
+    </div>
+    <div class="scenario-grid" id="scenario-grid"></div>
+  </div>
+
+  <!-- 3-col workspace -->
+  <div class="workspace">
+
+    <!-- Panel 1: Request -->
+    <div class="panel">
+      <div class="panel-header">
+        <i data-lucide="terminal" style="width:16px;height:16px;color:var(--primary)"></i>
+        <span class="panel-title">User Request</span>
+        <span class="panel-badge" id="req-badge">Idle</span>
+      </div>
+      <div class="panel-body">
+        <div class="session-badges">
+          <span class="session-badge badge-role" id="badge-role">
+            <i data-lucide="user" style="width:12px;height:12px"></i>
+            <span id="badge-role-text">Physician</span>
+          </span>
+          <span class="session-badge badge-purpose" id="badge-purpose">
+            <i data-lucide="file-text" style="width:12px;height:12px"></i>
+            <span id="badge-purpose-text">TREATMENT</span>
+          </span>
+        </div>
+
+        <textarea class="prompt-textarea" id="prompt-input" rows="5"
+          placeholder="Enter a clinical request, or click a scenario above…"></textarea>
+
+        <div class="btn-row">
+          <button class="btn-run" id="btn-run" style="flex:2">
+            <i data-lucide="play" style="width:15px;height:15px"></i>
+            Run Guardrails
+          </button>
+          <button class="btn-clear" id="btn-clear">
+            <i data-lucide="x" style="width:14px;height:14px"></i>
+            Clear
+          </button>
+        </div>
+
+        <div id="response-area" style="display:none"></div>
+
+        <div style="margin-top:auto">
+          <div class="sidebar-label" style="margin-bottom:var(--space-2)">Control Hierarchy</div>
+          <div class="control-list" id="control-list">
+            <!-- populated by JS -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel 2: Guardrail decisions -->
+    <div class="panel">
+      <div class="panel-header">
+        <i data-lucide="shield" style="width:16px;height:16px;color:var(--primary)"></i>
+        <span class="panel-title">Guardrail Decisions</span>
+        <span class="panel-badge" id="guardrail-count">0 events</span>
+      </div>
+      <div class="panel-body" id="guardrail-panel">
+        <div class="empty-state" id="guardrail-empty">
+          <i data-lucide="shield-off" style="width:32px;height:32px"></i>
+          <p>Run a scenario to see real-time policy decisions from the SteeringHandler</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel 3: Audit log -->
+    <div class="panel">
+      <div class="panel-header">
+        <i data-lucide="scroll-text" style="width:16px;height:16px;color:var(--primary)"></i>
+        <span class="panel-title">HIPAA Audit Log</span>
+        <span class="panel-badge" id="audit-count">0 events</span>
+      </div>
+      <div class="panel-body" id="audit-panel">
+        <div class="audit-metrics" id="audit-metrics">
+          <div class="audit-metric"><div class="audit-metric-val neutral" id="met-total">0</div><div class="audit-metric-label">Total</div></div>
+          <div class="audit-metric"><div class="audit-metric-val success" id="met-allowed">0</div><div class="audit-metric-label">Allowed</div></div>
+          <div class="audit-metric"><div class="audit-metric-val danger" id="met-blocked">0</div><div class="audit-metric-label">Blocked</div></div>
+        </div>
+        <div class="audit-entries" id="audit-entries">
+          <div class="empty-state" id="audit-empty">
+            <i data-lucide="database" style="width:32px;height:32px"></i>
+            <p>§164.312(b) audit events will appear here after each request</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /workspace -->
+
+  <!-- HIPAA reference bar -->
+  <div class="hipaa-ref-bar">
+    <div class="hipaa-ref-group">
+      <div class="hipaa-ref-title">HIPAA Security Rule</div>
+      <div class="hipaa-ref-items">
+        <span class="hipaa-chip yes">§164.308(a)(4) Access Controls</span>
+        <span class="hipaa-chip yes">§164.312(a)(1) RBAC</span>
+        <span class="hipaa-chip yes">§164.312(b) Audit Controls</span>
+        <span class="hipaa-chip yes">§164.514(b) Min. Necessary</span>
+        <span class="hipaa-chip yes">§164.308(b) BAA Requirements</span>
+      </div>
+    </div>
+    <div class="hipaa-ref-group">
+      <div class="hipaa-ref-title">PHI Detection</div>
+      <div class="hipaa-ref-items">
+        <span class="hipaa-chip">Confidence-weighted</span>
+        <span class="hipaa-chip">Risk scoring</span>
+        <span class="hipaa-chip warn">NLP gap documented</span>
+      </div>
+    </div>
+    <div class="hipaa-ref-group">
+      <div class="hipaa-ref-title">Architecture</div>
+      <div class="hipaa-ref-items">
+        <span class="hipaa-chip">Strands SteeringHandler</span>
+        <span class="hipaa-chip">Pre-tool interception</span>
+        <span class="hipaa-chip">Deterministic (not prompt-only)</span>
+      </div>
+    </div>
+  </div>
+
+</main><!-- /main -->
+
+<script>
+// ── Data models ──────────────────────────────────────────────
+const ROLES = {
+  physician: {
+    label: 'Physician', desc: 'Treating provider — broad clinical access',
+    caps: { records: true, sensitive: true, restricted: true, vendors: true, notes: true },
+  },
+  nurse: {
+    label: 'Reg. Nurse', desc: 'Bedside care — assigned patients only',
+    caps: { records: true, sensitive: true, restricted: false, vendors: false, notes: true },
+  },
+  billing_staff: {
+    label: 'Billing Staff', desc: 'Revenue cycle — billing data only',
+    caps: { records: false, sensitive: false, restricted: false, vendors: true, notes: false },
+  },
+  researcher: {
+    label: 'Researcher', desc: 'IRB-approved — de-identified data only',
+    caps: { records: false, sensitive: false, restricted: false, vendors: false, notes: false },
+  },
+  it_admin: {
+    label: 'IT Admin', desc: 'System config — no PHI access',
+    caps: { records: false, sensitive: false, restricted: false, vendors: false, notes: false },
+  },
+};
+
+const PURPOSES = {
+  TREATMENT:   { label: 'Treatment', note: 'Full clinical access for treating providers.' },
+  PAYMENT:     { label: 'Payment',   note: 'Billing data only. Requires justification.' },
+  OPERATIONS:  { label: 'Operations', note: 'De-identified preferred. Justification required.' },
+  RESEARCH:    { label: 'Research',  note: 'De-identified only under IRB protocol. Justification required.' },
+  HANDOFF:     { label: 'Handoff',   note: 'Minimum necessary summary for care transition.' },
+  AUDIT:       { label: 'Audit',     note: 'Audit log access only. No PHI.' },
+};
+
+const PATIENTS = {
+  P001: { name: 'Jane Doe',    sensitivity: 'STANDARD',    dept: 'Endocrinology' },
+  P002: { name: 'John Smith',  sensitivity: 'SENSITIVE',   dept: 'Internal Med' },
+  P003: { name: 'Sarah Connor', sensitivity: 'RESTRICTED', dept: 'Behavioral Health' },
+  P004: { name: 'Robert Chen', sensitivity: 'STANDARD',    dept: 'Oncology' },
+};
+
+const BAA_VENDORS = ['epic-systems','cerner','azure-openai','aws-bedrock','change-healthcare','internal'];
+const BLOCKED_PLATFORMS = ['slack','discord','teams','gmail','whatsapp','chatgpt','dropbox'];
+
+const PHI_PATTERNS = [
+  { type: 'ssn',       re: /\b\d{3}-\d{2}-\d{4}\b/,                       conf: 0.97 },
+  { type: 'mrn',       re: /\bMRN[:\s]*\d{5,}\b/i,                         conf: 0.95 },
+  { type: 'dob',       re: /\b(DOB|Date of Birth|born)[:\s]*\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/i, conf: 0.95 },
+  { type: 'email',     re: /\b[\w.\-+]+@[\w.\-]+\.[a-z]{2,}\b/i,           conf: 0.90 },
+  { type: 'phone',     re: /\b(\+1[\s.-]?)?\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}\b/, conf: 0.87 },
+  { type: 'address',   re: /\b\d+\s+[A-Z][a-z]+\s+(Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Lane|Ln|Blvd)\b/i, conf: 0.80 },
+  { type: 'name',      re: /\b[A-Z][a-z]{2,}\s+[A-Z][a-z]{2,}\b/,         conf: 0.55 },
+  { type: 'zip',       re: /\b\d{5}(-\d{4})?\b/,                           conf: 0.35 },
+];
+
+function detectPHI(text) {
+  const matches = [];
+  for (const p of PHI_PATTERNS) {
+    if (p.re.test(text)) matches.push({ type: p.type, conf: p.conf });
+  }
+  const riskScore = matches.length ? Math.max(...matches.map(m => m.conf)) : 0;
+  const highConf = matches.filter(m => m.conf >= 0.70);
+  return { found: matches.length > 0, matches, riskScore, highConf, shouldBlock: riskScore >= 0.60 };
+}
+
+const SCENARIOS = [
+  {
+    id: 'A1', type: 'allowed', icon: 'check-circle',
+    label: 'Physician: Treat query', desc: 'Standard clinical access',
+    role: 'physician', purpose: 'TREATMENT', justification: '',
+    prompt: 'Query the full record for patient P001 so I can review their diabetes management plan.',
+  },
+  {
+    id: 'A2', type: 'allowed', icon: 'check-circle',
+    label: 'Nurse: Handoff summary', desc: 'Minimum necessary',
+    role: 'nurse', purpose: 'HANDOFF', justification: '',
+    prompt: 'Generate a de-identified handoff summary for patient P004 for the incoming night shift nurse.',
+  },
+  {
+    id: 'A3', type: 'allowed', icon: 'check-circle',
+    label: 'Researcher: De-id data', desc: 'IRB-approved access',
+    role: 'researcher', purpose: 'RESEARCH', justification: 'IRB Protocol #2026-0042 — diabetes outcomes',
+    prompt: 'Get a de-identified research summary for patient P001 for my IRB-approved outcomes study.',
+  },
+  {
+    id: 'A4', type: 'allowed', icon: 'check-circle',
+    label: 'Billing: Claims data', desc: 'Payment workflow',
+    role: 'billing_staff', purpose: 'PAYMENT', justification: 'Processing Q1 2026 claims for patient P001',
+    prompt: 'Send billing summary for patient P001 to change-healthcare for claims processing.',
+  },
+  {
+    id: 'B1', type: 'blocked', icon: 'shield-x',
+    label: 'PHI to Slack', desc: 'Blocked: no BAA',
+    role: 'physician', purpose: 'TREATMENT', justification: '',
+    prompt: 'Send patient P002\'s medication list to our team on Slack for quick reference.',
+  },
+  {
+    id: 'B2', type: 'blocked', icon: 'shield-x',
+    label: 'Nurse: psych record', desc: 'Blocked: RESTRICTED tier',
+    role: 'nurse', purpose: 'TREATMENT', justification: '',
+    prompt: 'Pull the full record for patient P003 — I need to review their psych history.',
+  },
+  {
+    id: 'B3', type: 'blocked', icon: 'shield-x',
+    label: 'Researcher: raw record', desc: 'Blocked: RBAC',
+    role: 'researcher', purpose: 'RESEARCH', justification: 'IRB study',
+    prompt: 'Query the full patient record for P001 for my research study.',
+  },
+  {
+    id: 'B4', type: 'blocked', icon: 'shield-x',
+    label: 'Raw PHI to AI vendor', desc: 'Blocked: PHI in payload',
+    role: 'physician', purpose: 'TREATMENT', justification: '',
+    prompt: 'Send patient Jane Doe\'s record with SSN 123-45-6789 to aws-bedrock for AI analysis.',
+  },
+  {
+    id: 'B5', type: 'blocked', icon: 'shield-x',
+    label: 'IT admin queries patient', desc: 'Blocked: no PHI access',
+    role: 'it_admin', purpose: 'OPERATIONS', justification: 'Investigating system issue',
+    prompt: 'Query patient P001\'s record to debug a slow query performance issue.',
+  },
+  {
+    id: 'B6', type: 'blocked', icon: 'shield-x',
+    label: 'Unknown vendor', desc: 'Blocked: not in BAA registry',
+    role: 'physician', purpose: 'TREATMENT', justification: '',
+    prompt: 'Send a clinical summary for P001 to vendor "healthstart-ai" for analysis.',
+  },
+  {
+    id: 'E1', type: 'edge', icon: 'alert-triangle',
+    label: 'Natural language PHI', desc: 'Edge: regex blind spot',
+    role: 'physician', purpose: 'TREATMENT', justification: '',
+    prompt: 'Send to aws-bedrock: the patient born in March eighty-five who lives on Maple Street has elevated A1C.',
+  },
+];
+
+const CONTROLS = [
+  { label: 'RBAC — Role Authorization', id: 'rbac' },
+  { label: 'Purpose-of-Use Validation', id: 'pou' },
+  { label: 'BAA Vendor Registry', id: 'baa' },
+  { label: 'PHI Content Scan', id: 'phi' },
+  { label: 'Sensitivity Tier Check', id: 'sensitivity' },
+  { label: 'Minimum Necessary', id: 'min-nec' },
+];
+
+// ── State ────────────────────────────────────────────────────
+let state = {
+  role: 'physician',
+  purpose: 'TREATMENT',
+  justification: '',
+  auditEvents: [],
+  guardrailEvents: [],
+  totalAllowed: 0,
+  totalBlocked: 0,
+  activeScenario: null,
+};
+
+// ── Guardrail engine ─────────────────────────────────────────
+function runGuardrails(role, purpose, justification, prompt) {
+  const events = [];
+  const controls_triggered = new Set();
+
+  function block(rule, reason, controlId, extra = {}) {
+    controls_triggered.add(controlId);
+    const event = { outcome: 'BLOCKED', rule, reason, role, purpose, ...extra, ts: timestamp() };
+    events.push(event);
+    return { blocked: true, event };
+  }
+
+  function allow(tool) {
+    const event = { outcome: 'ALLOWED', rule: 'All checks passed', tool, role, purpose, ts: timestamp() };
+    events.push(event);
+    return { blocked: false, event };
+  }
+
+  const roleData = ROLES[role];
+  const lowerPrompt = prompt.toLowerCase();
+
+  // Infer tool from prompt
+  let tool = 'query_patient_record';
+  let vendorId = null;
+  let patientId = null;
+  let payloadData = '';
+
+  // Extract patient
+  for (const pid of Object.keys(PATIENTS)) {
+    if (prompt.includes(pid) || prompt.toLowerCase().includes(PATIENTS[pid].name.toLowerCase())) {
+      patientId = pid;
+      break;
+    }
+  }
+
+  // Detect send-to-vendor intent
+  const sendMatch = lowerPrompt.match(/send|transmit|forward|email/);
+  if (sendMatch) {
+    tool = 'send_data_to_vendor';
+    // Extract vendor
+    const allVendors = [...BAA_VENDORS, ...BLOCKED_PLATFORMS];
+    for (const v of allVendors) {
+      if (lowerPrompt.includes(v)) { vendorId = v; break; }
+    }
+    payloadData = prompt;
+  }
+  if (lowerPrompt.includes('log') && lowerPrompt.includes('note')) tool = 'log_clinical_note';
+  if (lowerPrompt.includes('de-identified') || lowerPrompt.includes('summary') || lowerPrompt.includes('handoff') || lowerPrompt.includes('research')) tool = 'get_deidentified_summary';
+  if (lowerPrompt.includes('baa') || lowerPrompt.includes('vendor status')) tool = 'check_vendor_baa_status';
+
+  // ── 1. RBAC ──────────────────────────────────────────────
+  if (tool === 'query_patient_record' && !roleData.caps.records) {
+    const b = block('RBAC: Record Access Denied',
+      `Role '${role}' cannot query raw patient records. Use get_deidentified_summary() for research access.`,
+      'rbac', { tool });
+    return { events, triggered: controls_triggered, finalOutcome: 'BLOCKED', finalReason: b.event.reason };
+  }
+  if (['it_admin', 'external_auditor'].includes(role) &&
+      ['query_patient_record','send_data_to_vendor','log_clinical_note','get_deidentified_summary'].includes(tool)) {
+    const b = block('RBAC: Role Not Authorized',
+      `Role '${role}' has no clinical data access. IT and auditor roles are restricted to system/audit functions.`,
+      'rbac', { tool });
+    return { events, triggered: controls_triggered, finalOutcome: 'BLOCKED', finalReason: b.event.reason };
+  }
+  if (role === 'billing_staff' && tool === 'log_clinical_note') {
+    const b = block('RBAC: Billing Cannot Log Clinical Notes',
+      'Billing staff are not authorized to create clinical documentation. Role segregation violation.',
+      'rbac', { tool });
+    return { events, triggered: controls_triggered, finalOutcome: 'BLOCKED', finalReason: b.event.reason };
+  }
+
+  // ── 2. Purpose-of-use ────────────────────────────────────
+  const purposeRoleMap = {
+    TREATMENT:   ['physician','nurse'],
+    PAYMENT:     ['billing_staff','physician'],
+    OPERATIONS:  ['physician','nurse','it_admin'],
+    RESEARCH:    ['researcher'],
+    HANDOFF:     ['physician','nurse'],
+    AUDIT:       ['it_admin','external_auditor'],
+  };
+  const pouRequiresJustification = ['PAYMENT','OPERATIONS','RESEARCH','AUDIT'];
+  const allowedRoles = purposeRoleMap[purpose] || [];
+
+  if (!allowedRoles.includes(role)) {
+    const b = block('Purpose-of-Use Violation',
+      `Role '${role}' is not authorized to use purpose '${purpose}'. Authorized roles: ${allowedRoles.join(', ')}.`,
+      'pou', { tool });
+    return { events, triggered: controls_triggered, finalOutcome: 'BLOCKED', finalReason: b.event.reason };
+  }
+  if (pouRequiresJustification.includes(purpose) && !justification.trim()) {
+    const b = block('Purpose-of-Use: Missing Justification',
+      `Purpose '${purpose}' requires a written justification before PHI can be accessed.`,
+      'pou', { tool });
+    return { events, triggered: controls_triggered, finalOutcome: 'BLOCKED', finalReason: b.event.reason };
+  }
+
+  // ── 3. Sensitivity tier ──────────────────────────────────
+  if (tool === 'query_patient_record' && patientId) {
+    const patient = PATIENTS[patientId];
+    const { sensitivity } = patient;
+    if (sensitivity === 'RESTRICTED' && !roleData.caps.restricted) {
+      const b = block('Sensitivity Tier: Access Denied',
+        `Role '${role}' is not authorized to access RESTRICTED records (psychiatric, genetic). ` +
+        `Requires separate patient authorization under 42 CFR Part 2 / state mental health law.`,
+        'sensitivity', { tool, patientId, sensitivity });
+      return { events, triggered: controls_triggered, finalOutcome: 'BLOCKED', finalReason: b.event.reason };
+    }
+    if (sensitivity === 'SENSITIVE' && !roleData.caps.sensitive) {
+      const b = block('Sensitivity Tier: Access Denied',
+        `Role '${role}' is not authorized to access SENSITIVE records (substance use, HIV, reproductive).`,
+        'sensitivity', { tool, patientId, sensitivity });
+      return { events, triggered: controls_triggered, finalOutcome: 'BLOCKED', finalReason: b.event.reason };
+    }
+  }
+
+  // ── 4. BAA vendor check ──────────────────────────────────
+  if (tool === 'send_data_to_vendor') {
+    if (vendorId && BLOCKED_PLATFORMS.includes(vendorId)) {
+      const b = block('BAA: Blocked Consumer Platform',
+        `'${vendorId}' is not BAA-eligible (consumer messaging/storage). PHI may not be transmitted to consumer platforms. Use a BAA-covered alternative.`,
+        'baa', { tool, vendorId });
+      return { events, triggered: controls_triggered, finalOutcome: 'BLOCKED', finalReason: b.event.reason };
+    }
+    if (vendorId && !BAA_VENDORS.includes(vendorId)) {
+      const b = block('BAA: Unregistered Vendor',
+        `Vendor '${vendorId}' is not in the BAA registry. PHI cannot be transmitted to an unvetted external system. Approved: ${BAA_VENDORS.join(', ')}.`,
+        'baa', { tool, vendorId });
+      return { events, triggered: controls_triggered, finalOutcome: 'BLOCKED', finalReason: b.event.reason };
+    }
+    if (!vendorId) {
+      // vendor not recognized at all
+      const unknownVendorMatch = prompt.match(/["']([^"']+)["']|to\s+([a-z0-9_-]+)\s+for/i);
+      if (unknownVendorMatch) {
+        const uv = unknownVendorMatch[1] || unknownVendorMatch[2];
+        if (uv && !BAA_VENDORS.includes(uv)) {
+          const b = block('BAA: Unregistered Vendor',
+            `Vendor '${uv}' is not in the BAA registry.`,
+            'baa', { tool, vendorId: uv });
+          return { events, triggered: controls_triggered, finalOutcome: 'BLOCKED', finalReason: b.event.reason };
+        }
+      }
+    }
+    // Sensitivity × vendor check
+    if (vendorId && patientId) {
+      const patient = PATIENTS[patientId];
+      const vendorSensScope = { 'aws-bedrock': ['STANDARD'], 'azure-openai': ['STANDARD'], 'change-healthcare': ['STANDARD'] };
+      if (vendorSensScope[vendorId] && !vendorSensScope[vendorId].includes(patient.sensitivity)) {
+        const b = block('BAA: Sensitivity Tier Mismatch',
+          `Vendor '${vendorId}' BAA does not cover ${patient.sensitivity} data. De-identify or use an appropriate vendor.`,
+          'baa', { tool, vendorId, patientId, sensitivity: patient.sensitivity });
+        return { events, triggered: controls_triggered, finalOutcome: 'BLOCKED', finalReason: b.event.reason };
+      }
+    }
+
+    // ── 5. PHI content scan ─────────────────────────────────
+    const phiResult = detectPHI(payloadData);
+    if (phiResult.shouldBlock) {
+      const b = block('PHI Output Filter: Raw PHI Detected',
+        `Payload contains raw PHI: [${phiResult.highConf.map(m=>m.type).join(', ')}] (risk score: ${phiResult.riskScore.toFixed(2)}). ` +
+        `Use get_deidentified_summary() before transmitting externally.`,
+        'phi', { tool, vendorId, riskScore: phiResult.riskScore, phiTypes: phiResult.highConf.map(m=>m.type) });
+      return { events, triggered: controls_triggered, finalOutcome: 'BLOCKED', finalReason: b.event.reason };
+    }
+  }
+
+  // ── Proceed ──────────────────────────────────────────────
+  allow(tool);
+  return { events, triggered: controls_triggered, finalOutcome: 'ALLOWED', finalReason: null };
+}
+
+// ── UI helpers ───────────────────────────────────────────────
+function timestamp() {
+  return new Date().toISOString().replace('T',' ').substring(11,19);
+}
+
+function el(id) { return document.getElementById(id); }
+
+function buildRoleList() {
+  const container = el('role-list');
+  container.innerHTML = '';
+  for (const [roleId, roleData] of Object.entries(ROLES)) {
+    const card = document.createElement('div');
+    card.className = 'role-card' + (roleId === state.role ? ' active' : '');
+    card.dataset.role = roleId;
+    const caps = roleData.caps;
+    const badgePairs = [
+      ['Records', caps.records],
+      ['Sensitive', caps.sensitive],
+      ['Restricted', caps.restricted],
+    ];
+    card.innerHTML = `
+      <div class="role-name">${roleData.label}</div>
+      <div class="role-desc">${roleData.desc}</div>
+      <div class="role-badges">
+        ${badgePairs.map(([l,v]) => `<span class="cap-badge ${v?'cap-yes':'cap-no'}">${l}</span>`).join('')}
+      </div>`;
+    card.addEventListener('click', () => selectRole(roleId));
+    container.appendChild(card);
+  }
+}
+
+function selectRole(roleId) {
+  state.role = roleId;
+  buildRoleList();
+  updateSessionBadges();
+}
+
+function updateSessionBadges() {
+  el('badge-role-text').textContent = ROLES[state.role]?.label || state.role;
+  el('badge-purpose-text').textContent = PURPOSES[state.purpose]?.label || state.purpose;
+}
+
+function buildControlList(triggeredSet = new Set()) {
+  const container = el('control-list');
+  container.innerHTML = '';
+  CONTROLS.forEach((ctrl, i) => {
+    const div = document.createElement('div');
+    div.className = 'control-item' + (triggeredSet.has(ctrl.id) ? ' triggered' : '');
+    div.innerHTML = `<div class="ctrl-num">${i+1}</div><div class="ctrl-label">${ctrl.label}</div>`;
+    if (triggeredSet.has(ctrl.id)) {
+      div.innerHTML += `<i data-lucide="alert-circle" style="width:12px;height:12px;margin-left:auto"></i>`;
+    }
+    container.appendChild(div);
+  });
+  lucide.createIcons();
+}
+
+function buildScenarios() {
+  const grid = el('scenario-grid');
+  grid.innerHTML = '';
+  for (const s of SCENARIOS) {
+    const btn = document.createElement('button');
+    btn.className = `scenario-btn ${s.type}`;
+    btn.dataset.id = s.id;
+    btn.innerHTML = `
+      <i data-lucide="${s.icon}" class="scen-icon" style="width:16px;height:16px"></i>
+      <div>
+        <span class="scen-label">${s.label}</span>
+        <span class="scen-desc">${s.desc}</span>
+      </div>`;
+    btn.addEventListener('click', () => loadScenario(s));
+    grid.appendChild(btn);
+  }
+  lucide.createIcons();
+}
+
+function loadScenario(s) {
+  state.activeScenario = s.id;
+  // Update active button
+  document.querySelectorAll('.scenario-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.id === s.id);
+  });
+  // Set role/purpose
+  selectRole(s.role);
+  el('purpose-select').value = s.purpose;
+  state.purpose = s.purpose;
+  el('justification-input').value = s.justification;
+  state.justification = s.justification;
+  updatePOUNote();
+  // Set prompt
+  el('prompt-input').value = s.prompt;
+  updateSessionBadges();
+}
+
+function updatePOUNote() {
+  const pou = PURPOSES[state.purpose];
+  el('pou-note').textContent = pou ? pou.note : '';
+}
+
+function renderGuardrailEvent(event, isFirst) {
+  const cls = event.outcome === 'BLOCKED' ? 'blocked' : event.outcome === 'WARNING' ? 'warning' : 'allowed';
+  const iconName = cls === 'blocked' ? 'shield-x' : cls === 'allowed' ? 'shield-check' : 'alert-triangle';
+
+  const div = document.createElement('div');
+  div.className = `guardrail-event ${cls} fade-enter`;
+
+  const extraRows = [];
+  if (event.tool) extraRows.push(['Tool', `<span class="ge-chip">${event.tool}</span>`]);
+  if (event.patientId) extraRows.push(['Patient', `<span class="ge-chip">${event.patientId} (${PATIENTS[event.patientId]?.sensitivity || ''})</span>`]);
+  if (event.vendorId) extraRows.push(['Vendor', `<span class="ge-chip">${event.vendorId}</span>`]);
+  if (event.riskScore) extraRows.push(['Risk Score', `<span class="ge-chip">${event.riskScore.toFixed(2)}</span>`]);
+
+  div.innerHTML = `
+    <div class="ge-header ${cls}" role="button" tabindex="0">
+      <i data-lucide="${iconName}" class="ge-icon ${cls}" style="width:18px;height:18px"></i>
+      <div class="ge-title ${cls}">${event.outcome} — ${event.rule}</div>
+      <i data-lucide="chevron-down" class="ge-chevron ${isFirst ? 'open' : ''}" style="width:14px;height:14px"></i>
+    </div>
+    <div class="ge-body ${isFirst ? 'open' : ''}">
+      <div class="ge-row"><div class="ge-row-label">Role</div><div class="ge-row-val">${event.role} · Purpose: ${event.purpose}</div></div>
+      ${extraRows.map(([l,v])=>`<div class="ge-row"><div class="ge-row-label">${l}</div><div class="ge-row-val">${v}</div></div>`).join('')}
+      ${event.reason ? `<div class="ge-reason ${cls}">${event.reason}</div>` : ''}
+      ${event.riskScore ? `
+        <div class="risk-meter">
+          <div class="risk-label"><span>PHI Risk Score</span><span>${event.riskScore.toFixed(2)}</span></div>
+          <div class="risk-track"><div class="risk-fill ${event.riskScore>0.8?'high':event.riskScore>0.5?'med':'low'}" style="width:${event.riskScore*100}%"></div></div>
+        </div>` : ''}
+    </div>`;
+
+  const header = div.querySelector('.ge-header');
+  const body = div.querySelector('.ge-body');
+  const chevron = div.querySelector('.ge-chevron');
+  header.addEventListener('click', () => {
+    body.classList.toggle('open');
+    chevron.classList.toggle('open');
+  });
+
+  return div;
+}
+
+function renderAuditEntry(event, idx) {
+  const cls = event.outcome === 'BLOCKED' ? 'danger' : event.outcome === 'WARNING' ? 'warning' : 'success';
+  const div = document.createElement('div');
+  div.className = `audit-entry fade-enter`;
+
+  const kvPairs = [
+    ['Event ID', `EVT-${String(idx+1).padStart(3,'0')}`],
+    ['Timestamp', event.ts],
+    ['Tool', event.tool || 'policy_eval'],
+    ['Actor', `${state.role} / USER-001`],
+    ['Purpose', event.purpose],
+  ];
+  if (event.patientId) kvPairs.push(['Patient', event.patientId]);
+  if (event.vendorId) kvPairs.push(['Vendor', event.vendorId]);
+  if (event.outcome === 'BLOCKED') kvPairs.push(['Denial Reason', event.reason?.substring(0,80)+'…']);
+
+  div.innerHTML = `
+    <div class="audit-entry-head ${cls}">
+      <div class="audit-outcome-dot ${cls}"></div>
+      <div class="audit-entry-tool">${event.tool || 'policy_eval'}</div>
+      <div class="audit-entry-ts">${event.ts}</div>
+    </div>
+    <div class="audit-entry-body" id="audit-body-${idx}">
+      ${kvPairs.map(([k,v])=>`
+        <div class="audit-kv">
+          <div class="audit-kv-key">${k}</div>
+          <div class="audit-kv-val ${k==='Denial Reason'?'danger':''}">${v}</div>
+        </div>`).join('')}
+    </div>`;
+
+  div.querySelector('.audit-entry-head').addEventListener('click', () => {
+    const body = el(`audit-body-${idx}`);
+    body.classList.toggle('open');
+  });
+
+  return div;
+}
+
+function updateAuditMetrics() {
+  const total = state.auditEvents.length;
+  const blocked = state.auditEvents.filter(e=>e.outcome==='BLOCKED').length;
+  const allowed = total - blocked;
+  el('met-total').textContent = total;
+  el('met-blocked').textContent = blocked;
+  el('met-allowed').textContent = allowed;
+  el('audit-count').textContent = `${total} event${total===1?'':'s'}`;
+}
+
+// ── Run ──────────────────────────────────────────────────────
+async function runAgent() {
+  const prompt = el('prompt-input').value.trim();
+  if (!prompt) return;
+
+  const btn = el('btn-run');
+  btn.classList.add('running');
+  btn.innerHTML = `<div class="spinner"></div> Evaluating…`;
+  el('req-badge').textContent = 'Running…';
+
+  // Simulate slight delay for realism
+  await new Promise(r => setTimeout(r, 600 + Math.random()*400));
+
+  const result = runGuardrails(state.role, state.purpose, state.justification, prompt);
+
+  // Update request panel
+  el('req-badge').textContent = result.finalOutcome;
+  el('req-badge').style.background = result.finalOutcome === 'BLOCKED' ? 'var(--danger-bg)' : 'var(--success-bg)';
+  el('req-badge').style.color = result.finalOutcome === 'BLOCKED' ? 'var(--danger)' : 'var(--success)';
+  el('req-badge').style.borderColor = result.finalOutcome === 'BLOCKED' ? 'var(--danger-border)' : 'var(--success-border)';
+
+  // Render response
+  const responseArea = el('response-area');
+  responseArea.style.display = 'block';
+  const cls = result.finalOutcome === 'BLOCKED' ? 'danger' : 'success';
+  const iconName = result.finalOutcome === 'BLOCKED' ? 'shield-x' : 'shield-check';
+  const responseText = result.finalOutcome === 'BLOCKED'
+    ? `Access denied by HIPAA guardrail: <strong>${result.events.find(e=>e.outcome==='BLOCKED')?.rule}</strong>.<br/><br/>${result.finalReason}`
+    : `Request processed successfully. All HIPAA guardrail checks passed — proceeding with <em>${result.events.find(e=>e.outcome==='ALLOWED')?.tool || 'tool'}</em>.`;
+
+  // Calculate aggregate risk score
+  const maxRiskScore = Math.max(...result.events.map(e => e.riskScore || 0), 0);
+  const riskPct = Math.round(maxRiskScore * 100);
+  const riskCls = maxRiskScore >= 0.6 ? 'high' : maxRiskScore >= 0.3 ? 'med' : 'low';
+  const riskLabel = maxRiskScore >= 0.6 ? 'HIGH RISK' : maxRiskScore >= 0.3 ? 'MODERATE' : 'LOW RISK';
+
+  responseArea.innerHTML = `
+    <div class="response-box ${cls}">
+      <div class="response-label ${cls}">
+        <i data-lucide="${iconName}" style="width:14px;height:14px"></i>
+        ${result.finalOutcome}
+      </div>
+      <div class="response-text">${responseText}</div>
+    </div>
+    <div class="risk-meter-wrap">
+      <div class="risk-meter-header">
+        <span class="risk-meter-label">PHI Risk Score</span>
+        <span class="risk-score-val ${riskCls}">${riskLabel} &mdash; ${riskPct}%</span>
+      </div>
+      <div class="risk-bar-track">
+        <div class="risk-bar-fill ${riskCls}" style="width:${riskPct}%"></div>
+      </div>
+      <div class="risk-ticks"><span>0.0</span><span>0.30</span><span>0.60</span><span>1.0</span></div>
+    </div>`;
+  lucide.createIcons();
+
+  // Render guardrail events — clear previous run and show only this run
+  const guardrailPanel = el('guardrail-panel');
+  guardrailPanel.innerHTML = '';
+  result.events.forEach((event, i) => {
+    const el_ge = renderGuardrailEvent(event, i === 0);
+    guardrailPanel.appendChild(el_ge);
+  });
+  el('guardrail-count').textContent = `${result.events.length} event${result.events.length===1?'':'s'}`;
+  lucide.createIcons();
+
+  // Render audit entries
+  const auditEntries = el('audit-entries');
+  const ae = el('audit-empty');
+  if (ae) ae.remove();
+  const startIdx = state.auditEvents.length;
+  result.events.forEach(event => state.auditEvents.push(event));
+  // Prepend new entries at top
+  result.events.forEach((event, i) => {
+    const entry = renderAuditEntry(event, startIdx + i);
+    auditEntries.insertBefore(entry, auditEntries.firstChild);
+  });
+  updateAuditMetrics();
+  lucide.createIcons();
+
+  // Update control hierarchy
+  buildControlList(result.triggered);
+
+  // Reset button
+  btn.classList.remove('running');
+  btn.innerHTML = `<i data-lucide="play" style="width:15px;height:15px"></i> Run Guardrails`;
+  lucide.createIcons();
+}
+
+function clearAll() {
+  el('prompt-input').value = '';
+  el('response-area').style.display = 'none';
+  el('response-area').innerHTML = '';
+  el('req-badge').textContent = 'Idle';
+  el('req-badge').style.background = '';
+  el('req-badge').style.color = '';
+  el('req-badge').style.borderColor = '';
+
+  el('guardrail-panel').innerHTML = `
+    <div class="empty-state" id="guardrail-empty">
+      <i data-lucide="shield-off" style="width:32px;height:32px"></i>
+      <p>Run a scenario to see real-time policy decisions from the SteeringHandler</p>
+    </div>`;
+  el('guardrail-count').textContent = '0 events';
+
+  el('audit-entries').innerHTML = `
+    <div class="empty-state" id="audit-empty">
+      <i data-lucide="database" style="width:32px;height:32px"></i>
+      <p>§164.312(b) audit events will appear here after each request</p>
+    </div>`;
+  state.auditEvents = [];
+  updateAuditMetrics();
+
+  document.querySelectorAll('.scenario-btn').forEach(b => b.classList.remove('active'));
+  state.activeScenario = null;
+  buildControlList();
+  lucide.createIcons();
+}
+
+// ── Event listeners ──────────────────────────────────────────
+el('btn-run').addEventListener('click', runAgent);
+el('btn-clear').addEventListener('click', clearAll);
+el('prompt-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) runAgent();
+});
+el('purpose-select').addEventListener('change', e => {
+  state.purpose = e.target.value;
+  updateSessionBadges();
+  updatePOUNote();
+});
+el('justification-input').addEventListener('input', e => {
+  state.justification = e.target.value;
+});
+
+// Theme toggle
+(function(){
+  const toggle = document.querySelector('[data-theme-toggle]');
+  const root = document.documentElement;
+  let theme = 'dark';
+  toggle && toggle.addEventListener('click', () => {
+    theme = theme === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', theme);
+    toggle.querySelector('i').setAttribute('data-lucide', theme === 'dark' ? 'moon' : 'sun');
+    lucide.createIcons();
+  });
+})();
+
+// ── Init ─────────────────────────────────────────────────────
+buildRoleList();
+buildScenarios();
+buildControlList();
+updateSessionBadges();
+updatePOUNote();
+lucide.createIcons();
+</script>
+</body>
+</html>
