@@ -1,0 +1,33 @@
+# /etc/systemd/system/guardrails.service
+# Install: sudo cp guardrails/guardrails.service /etc/systemd/system/
+#          sudo systemctl enable --now guardrails
+#
+# Runs the PHI guardrail sidecar on localhost:8100.
+# Any service on this machine can POST to http://127.0.0.1:8100/check
+# before making any external call that touches PHI.
+
+[Unit]
+Description=PHI Guardrails — HIPAA pre-flight check sidecar
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/opt/phi-guardrails
+ExecStart=/opt/phi-guardrails/.venv/bin/uvicorn guardrails.server:app \
+    --host 127.0.0.1 \
+    --port 8100 \
+    --workers 2 \
+    --log-level info
+Restart=always
+RestartSec=3
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/phi-guardrails
+
+[Install]
+WantedBy=multi-user.target
