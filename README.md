@@ -2,6 +2,8 @@
 ### Healthcare AI Security · HIPAA Policy Enforcement · Strands Agents SDK
 
 > **Portfolio project by Noah Mills** — Healthcare IT / Cybersecurity / AI Governance  
+
+![PHI Guardrails Demo — Nurse blocked from accessing RESTRICTED psychiatric record](screenshot.png)
 > Demonstrates: RBAC, Purpose-of-Use enforcement, PHI detection, BAA verification, sensitivity tiers, structured audit logging, and eval-driven policy testing — all implemented as deterministic code, not prompt-only safety.
 
 ---
