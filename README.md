@@ -503,3 +503,103 @@ This is not a production system. It is a working demonstration of the principles
 **Noah Mills** — Healthcare IT / Cybersecurity / AI Governance  
 [GitHub: itsnmills](https://github.com/itsnmills) · St. Louis, MO  
 Building at the intersection of AI agents, cloud security, and healthcare compliance.
+
+
+---
+
+## System Requirements
+
+| Requirement | Details |
+|---|---|
+| **Python** | 3.10 or higher ([python.org](https://www.python.org/downloads/)) |
+| **pip** | Included with Python — used to install dependencies |
+| **Operating System** | Windows, macOS, or Linux |
+| **Disk Space** | ~100 MB (including dependencies) |
+| **RAM** | 512 MB minimum |
+| **Network** | Not required for the standalone guardrails module. The Streamlit demo UI and Strands agent integration require network for `pip install` only. |
+
+**Standalone guardrails module (zero dependencies):**
+
+| Requirement | Details |
+|---|---|
+| **Python** | 3.10 or higher |
+| **Dependencies** | None — pure Python stdlib |
+| **Disk Space** | < 1 MB |
+
+### Installation
+
+```bash
+git clone https://github.com/itsnmills/Strands-PHI-Guardrails-Demo.git
+cd Strands-PHI-Guardrails-Demo
+pip install -r requirements.txt
+```
+
+### Dependencies
+
+**Full demo** (Streamlit UI + Strands integration):
+
+| Package | What It Does | Why It's Needed |
+|---|---|---|
+| `strands-agents` | AI agent SDK | Powers the Strands agent integration demo |
+| `python-dotenv` | Environment config | Loads `.env` file for optional API keys |
+| `streamlit` | Web UI framework | Powers the interactive demo dashboard |
+| `pydantic` | Data validation | Validates guardrail check inputs and outputs |
+
+**Standalone guardrails module** (`guardrails/` folder):
+
+| Package | What It Does | Why It's Needed |
+|---|---|---|
+| None | — | The standalone module uses only Python standard library (`dataclasses`, `enum`, `typing`, `datetime`, `json`, `hashlib`). Zero external dependencies. |
+
+---
+
+## What This Tool Accesses On Your System
+
+This tool runs 100% locally on your machine. Here is exactly what it reads, writes, and accesses:
+
+| What | Access Type | Details |
+|---|---|---|
+| **In-memory policy engine** | Read | RBAC policies, sensitivity tiers, BAA registry, and PHI detection patterns are all defined in code. No external policy server. |
+| **Local audit log** | Write | Guardrail decisions (allowed/blocked) are logged locally in JSON format for compliance audit trails. |
+| **Browser (localhost:8501)** | Network (local only) | The Streamlit demo UI binds to `localhost` — not accessible from other machines or the internet. |
+| **No external APIs** | None | The guardrails module makes zero outbound network requests. Every check is a deterministic, in-process function call (~1ms). |
+| **No telemetry** | None | No analytics, tracking, crash reporting, or phone-home behavior of any kind. |
+| **No real PHI** | None | All demo scenarios use synthetic patient data (fake names, fake MRNs, fake records). No real patient data is included or required. |
+
+**Important:** The standalone `guardrails/` module is designed to be a pre-flight check that runs before any external call (LLM, email, webhook). It blocks unauthorized access deterministically — it does not rely on AI model behavior or prompt engineering.
+
+---
+
+## Privacy & Open Source Transparency
+
+**This is open-source software. You download it, you run it, you own it.**
+
+| Concern | Answer |
+|---|---|
+| **Can the developer see my data?** | No. This tool runs entirely on your machine. The developer (or anyone else) has zero access to your data, your results, or your system. |
+| **Does it phone home?** | No. There are no analytics, telemetry, crash reporting, update checks, or network calls of any kind. |
+| **Is my data stored in the cloud?** | No. All data stays on your local machine in files you can inspect, move, back up, or delete at any time. |
+| **Can I audit the code?** | Yes. Every line of source code is available in this repository. The MIT license gives you the right to use, modify, and distribute it. |
+| **Is it safe to use with real organizational data?** | Yes — but as with any tool, follow your organization's data handling policies. Since everything runs locally, your data never leaves your control. |
+
+> **If you're evaluating this tool for your organization:** Download it, review the source code, run the demo mode first, and verify for yourself that it meets your security requirements. That's the entire point of open source.
+
+## Keeping Threat Intelligence & Regulatory Data Current
+
+The policy engine enforces controls mapped to:
+- **HIPAA Security Rule** (45 CFR §164.312 — access controls, audit controls, transmission security)
+- **HIPAA Privacy Rule** (45 CFR §164.502(b) — minimum necessary standard)
+- **42 CFR Part 2** (substance use disorder record protections)
+- **NIST AI RMF** (AI 100-1)
+
+Sensitivity classifications follow state and federal special-category protections (psychiatric, substance use, HIV/STI, reproductive health). When regulations are updated, the policy definitions will be updated accordingly:
+
+```bash
+git pull origin main
+```
+
+---
+
+## Security
+
+If you discover a security vulnerability in this tool, please report it responsibly by opening a GitHub issue or contacting the maintainer directly. Do not submit PHI or real patient data in bug reports.
