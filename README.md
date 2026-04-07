@@ -3,10 +3,6 @@
 
 > **Portfolio project by Noah Mills** — Healthcare IT / Cybersecurity / AI Governance  
 
-## 🔴 Live Interactive Demo
-
-**[▶ Launch PHI Guardrails Demo](https://www.perplexity.ai/computer/a/strands-phi-guardrails-healthc-lFAE5fEOTiC0T4CvehvmkQ)** — Full interactive browser demo, no install required. Click any of 11 scenarios to see real-time HIPAA policy enforcement.
-
 ![PHI Guardrails Demo UI v2 — Nurse blocked from accessing RESTRICTED psychiatric record](screenshot-ui-v2.jpg)
 > Demonstrates: RBAC, Purpose-of-Use enforcement, PHI detection, BAA verification, sensitivity tiers, structured audit logging, and eval-driven policy testing — all implemented as deterministic code, not prompt-only safety.
 
