@@ -1,10 +1,10 @@
 # Strands PHI Guardrails Demo
-### Healthcare AI Security · HIPAA Policy Enforcement · Strands Agents SDK
+### Healthcare AI Guardrails · Deterministic Policy Checks · Strands Agents SDK
 
 > **Portfolio project by Noah Mills** — Healthcare IT / Cybersecurity / AI Governance  
 
 ![PHI Guardrails Demo UI v2 — Nurse blocked from accessing RESTRICTED psychiatric record](screenshot-ui-v2.jpg)
-> Demonstrates: RBAC, Purpose-of-Use enforcement, PHI detection, BAA verification, sensitivity tiers, structured audit logging, and eval-driven policy testing — all implemented as deterministic code, not prompt-only safety.
+> Demonstrates: RBAC, Purpose-of-Use checks, PHI-pattern detection, BAA-status gating, sensitivity tiers, structured audit logging, and eval-driven policy testing — implemented as deterministic demo code, not prompt-only safety or compliance certification.
 
 ---
 
@@ -14,13 +14,13 @@ Healthcare AI systems are increasingly integrated into clinical workflows — su
 
 **That is not HIPAA compliance. That is vibe-based security.**
 
-Real healthcare AI security requires:
+Real healthcare AI guardrail demos should show:
 - **Deterministic controls** that cannot be bypassed by prompt injection
 - **Role-based access enforcement** that reflects clinical job families (nurses ≠ physicians ≠ billing staff)
 - **Purpose-of-use validation** to enforce HIPAA's minimum necessary standard
 - **Sensitivity classification** for special categories (psychiatric, substance use, HIV)
-- **Immutable audit logging** that satisfies 45 CFR Part 164 requirements
-- **BAA registry enforcement** before any external data transmission
+- **Structured audit logging** mapped to 45 CFR Part 164 concepts for review support
+- **BAA-status checks** before any simulated external data transmission
 
 This project demonstrates all of the above using the **Strands Agents SDK** and its `SteeringHandler` pre-tool interception pattern — and ships a **standalone `guardrails/` module** that works completely independently of Strands, with zero external dependencies.
 
