@@ -6,10 +6,18 @@
 
 Strands PHI Guardrails Demo is a healthcare AI safety portfolio project by Noah Mills. It shows how an assistant workflow can enforce deterministic controls before a tool call reaches records, vendors, LLMs, email, or audit-adjacent actions. The demo combines role-based access control, purpose-of-use checks, PHI-pattern detection, sensitivity tiers, BAA-status gating, and structured audit logging so the safety story is visible in code instead of buried in a prompt.
 
-This repo is a Velari companion demo for the public
-[Small Practice Security Kit](https://github.com/itsnmills/small-practice-security-kit):
-use it as the healthcare AI guardrails reference pattern, not as a separate
-compliance product.
+## Part of the Velari Healthcare Security Suite
+
+This repo is the healthcare AI guardrails reference pattern for the public
+[Small Practice Security Kit](https://github.com/itsnmills/small-practice-security-kit).
+Use it as a companion demo for allowed-purpose checks, PHI-pattern screening,
+BAA-status gating, and audit logging, not as a separate compliance product.
+
+Release and branch notes:
+
+- Current baseline: [`v0.1.0`](docs/releases/v0.1.0.md)
+- Canonical branch: `main`
+- Branch cleanup plan: [`docs/BRANCH_NORMALIZATION_PLAN.md`](docs/BRANCH_NORMALIZATION_PLAN.md)
 
 ## Work with Velari
 
