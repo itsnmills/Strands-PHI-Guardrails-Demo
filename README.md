@@ -11,6 +11,16 @@ This repo is a Velari companion demo for the public
 use it as the healthcare AI guardrails reference pattern, not as a separate
 compliance product.
 
+## Velari Suite Navigation
+
+Part of the Velari Healthcare Security Suite: local-first, PHI-avoidant tools for small healthcare practices and MSPs.
+
+| Repo | Role |
+|---|---|
+| [Small Practice Security Kit](https://github.com/itsnmills/small-practice-security-kit) | Flagship no-PHI readiness packet and owner/MSP handoff. |
+| [HealthAI Governance Auditor](https://github.com/itsnmills/health-ai-governance-auditor) | AI tool inventory, vendor questions, and PHI-handling review prompts. |
+| [Strands PHI Guardrails Demo](https://github.com/itsnmills/Strands-PHI-Guardrails-Demo) | Deterministic RBAC, purpose-of-use, BAA-status, and PHI-pattern guardrail examples. |
+
 The core idea is simple: sensitive healthcare workflows need policy gates that run before generation, not after. A nurse attempting to access a restricted psychiatric record is blocked; a physician with an allowed treatment purpose can proceed; raw SSNs or unsupported vendor sends are stopped and logged. The `guardrails/` module is intentionally small, local-first, and dependency-light so the pattern can be inspected, reused, or wrapped as an HTTP sidecar without turning the repo into a compliance claim.
 
 This is not a HIPAA certification, legal opinion, or production authorization layer. It is a concrete demo for healthcare AI governance conversations: what should be checked, where the check belongs, what gets logged, and how a team can explain the difference between prompt-only safety and enforceable workflow controls.
