@@ -11,7 +11,8 @@ Strands PHI Guardrails Demo is a healthcare AI safety portfolio project by Noah 
 This repo is the healthcare AI guardrails reference pattern for the public
 [Small Practice Security Kit](https://github.com/itsnmills/small-practice-security-kit).
 Use it as a companion demo for allowed-purpose checks, PHI-pattern screening,
-BAA-status gating, and audit logging, not as a separate compliance product.
+BAA-status gating, and audit logging that can feed a broader
+practice-readiness packet, not as a separate compliance product.
 
 Release and branch notes:
 
