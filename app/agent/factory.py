@@ -76,10 +76,17 @@ def create_agent(
     set_audit_logger(audit_logger)
 
     model = LiteLLMModel(
-        model_id="openai/gpt-4o",
+        model_id=os.environ.get("PHI_MODEL") or "deepseek-v4-flash",
         params={
-            "api_key": os.environ.get("OPENROUTER_API_KEY", ""),
-            "base_url": "https://openrouter.ai/api/v1",
+            "api_key": (
+                os.environ.get("OPENCODE_GO_API_KEY")
+                or os.environ.get("DEEPSEEK_API_KEY")
+                or os.environ.get("OPENCODE_API_KEY")
+                or os.environ.get("OPENROUTER_API_KEY")
+                or ""
+            ),
+            "base_url": os.environ.get("PHI_BASE_URL") or "https://opencode.ai/zen/go/v1",
+            "custom_llm_provider": "openai",
         },
     )
 

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PHI Guardrails</title>
+  <meta name="description" content="HIPAA constraints as code. A Strands Agents demo that blocks, redacts, and logs PHI before a tool runs.">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+  <div class="frame">
+    <header class="masthead">
+      <div class="masthead-mark">
+        <p class="doc-id">Healthcare AI security demo</p>
+        <h1>PHI <span>Guardrails</span></h1>
+        <p class="lede">HIPAA constraints as code, not prompts. Steering hooks decide ALLOW or BLOCK before a tool runs.</p>
+      </div>
+      <div class="masthead-meta">
+        <p class="stamp" id="status-stamp" data-state="READY">
+          <span class="stamp-kicker">Console</span>
+          <span class="stamp-value" id="status-value">READY</span>
+        </p>
+        <div class="meta-stats" aria-label="Demo inventory">
+          <div><strong>3</strong><span>Patients</span></div>
+          <div><strong>5</strong><span>Approved</span></div>
+          <div><strong>4</strong><span>Blocked</span></div>
+        </div>
+        <p class="notice">Synthetic records only. Model: <span id="model-name">deepseek-v4-flash</span>.</p>
+      </div>
+    </header>
+
+    <main class="board">
+      <section class="panel console" aria-labelledby="console-title">
+        <header class="panel-head">
+          <h2 id="console-title">Request</h2>
+          <p>Type a clinical request or load a scenario.</p>
+        </header>
+        <form id="run-form">
+          <label for="prompt">Instruction to the agent</label>
+          <textarea id="prompt" name="prompt" rows="5" maxlength="4000" required placeholder="Query the record for patient P001."></textarea>
+          <p class="hint">Ctrl or Cmd + Enter to run. Patient IDs in this demo: P001, P002, P003.</p>
+          <div class="actions">
+            <button type="submit" id="run-btn" class="btn-primary">Run</button>
+            <button type="button" id="clear-btn" class="btn-ghost">Clear</button>
+          </div>
+        </form>
+      </section>
+
+      <aside class="panel scenarios" aria-labelledby="scenario-title">
+        <header class="panel-head">
+          <h2 id="scenario-title">Scenarios</h2>
+          <p>Expected outcome is stamped on each row.</p>
+        </header>
+        <div class="scenario-list" id="scenario-list"></div>
+      </aside>
+
+      <section class="panel response" aria-labelledby="response-title">
+        <header class="panel-head">
+          <h2 id="response-title">Agent output</h2>
+        </header>
+        <div id="response-pane" class="output empty" data-state="empty">
+          <p class="empty-copy">Run a scenario or type a request. The steering log will show ALLOW or BLOCK.</p>
+        </div>
+      </section>
+
+      <section class="panel steering" aria-labelledby="steering-title">
+        <header class="panel-head">
+          <h2 id="steering-title">Steering log</h2>
+          <p>Deterministic hooks, not model goodwill.</p>
+        </header>
+        <ol id="steering-list" class="timeline"></ol>
+      </section>
+
+      <aside class="panel registry" aria-labelledby="registry-title">
+        <header class="panel-head">
+          <h2 id="registry-title">BAA registry</h2>
+        </header>
+        <div class="registry-block">
+          <h3>Approved</h3>
+          <ul id="vendor-list" class="key-list"></ul>
+        </div>
+        <div class="registry-block">
+          <h3>Blocked channels</h3>
+          <ul id="blocked-list" class="key-list blocked"></ul>
+        </div>
+        <details class="identifiers">
+          <summary>18 HIPAA identifiers</summary>
+          <ol id="identifier-list"></ol>
+        </details>
+      </aside>
+
+      <section class="panel audit" aria-labelledby="audit-title">
+        <header class="panel-head">
+          <h2 id="audit-title">HIPAA audit</h2>
+          <p id="audit-count">No entries yet.</p>
+        </header>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Status</th>
+                <th>Tool</th>
+                <th>Action</th>
+                <th>Masked inputs</th>
+              </tr>
+            </thead>
+            <tbody id="audit-body"></tbody>
+          </table>
+        </div>
+        <p class="audit-empty" id="audit-empty">The log fills after the first run. Inputs are masked before display.</p>
+      </section>
+    </main>
+
+    <footer class="colophon">
+      <p>This demo uses simulated patient data. Built with Strands Agents steering hooks. HIPAA constraints as code, not prompts.</p>
+      <p>Noah Mills / Healthcare AI Security</p>
+    </footer>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

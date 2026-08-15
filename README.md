@@ -26,3 +26,22 @@ Use this demo as a conversation starter for healthcare AI guardrails: RBAC, PHI-
 The core idea is simple: sensitive healthcare workflows need policy gates that run before generation, not after. A nurse attempting to access a restricted psychiatric record is blocked; a physician with an allowed treatment purpose can proceed; raw SSNs or unsupported vendor sends are stopped and logged. The `guardrails/` module is intentionally small, local-first, and dependency-light so the pattern can be inspected, reused, or wrapped as an HTTP sidecar without turning the repo into a compliance claim.
 
 This is not a HIPAA certification, legal opinion, or production authorization layer. It is a concrete demo for healthcare AI governance conversations: what should be checked, where the check belongs, what gets logged, and how a team can explain the difference between prompt-only safety and enforceable workflow controls.
+
+## Run
+
+Default model: **DeepSeek V4 Flash** via OpenCode Go.
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+# set OPENCODE_GO_API_KEY
+
+# New industrial console
+python3 server.py
+# http://localhost:8502
+
+# Existing Streamlit app
+streamlit run streamlit_app.py
+```
