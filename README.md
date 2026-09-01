@@ -6,12 +6,21 @@
 
 Strands PHI Guardrails Demo is a healthcare AI safety portfolio project by Noah Mills. It shows how an assistant workflow can enforce deterministic controls before a tool call reaches records, vendors, LLMs, email, or audit-adjacent actions. The demo combines role-based access control, purpose-of-use checks, PHI-pattern detection, sensitivity tiers, BAA-status gating, and structured audit logging so the safety story is visible in code instead of buried in a prompt.
 
-## Part of the Velari Healthcare Security Suite
+## How this was built, plainly
 
-This repo is the healthcare AI guardrails reference pattern for the public
-[Small Practice Security Kit](https://github.com/itsnmills/small-practice-security-kit).
-Use it as a companion demo for allowed-purpose checks, PHI-pattern screening,
-BAA-status gating, and audit logging, not as a separate compliance product.
+This is a personal learning project. I lean on AI heavily for the implementation. The part I
+actually developed here is the security judgment: deciding which checks belong before a tool
+call rather than after it, reading the source material closely enough to know what a real
+guardrail has to catch, and checking whether the output holds up.
+
+"Velari" shows up in this project's commit history and in the companion kit's source. It was
+a working name I used earlier on. It is not a company, there is no product, and nothing here
+is offered as a service.
+
+It is a companion demo to the public
+[Small Practice Security Kit](https://github.com/itsnmills/small-practice-security-kit),
+covering allowed-purpose checks, PHI-pattern screening, BAA-status gating, and audit logging.
+It is not a separate compliance product.
 
 Release and branch notes:
 
@@ -19,9 +28,7 @@ Release and branch notes:
 - Canonical branch: `main`
 - Branch cleanup plan: [`docs/BRANCH_NORMALIZATION_PLAN.md`](docs/BRANCH_NORMALIZATION_PLAN.md)
 
-## Work with Velari
-
-Use this demo as a conversation starter for healthcare AI guardrails: RBAC, PHI-pattern checks, BAA-status gating, allowed-purpose review, and audit logging before an assistant reaches tools or records. For a no-PHI readiness discussion, start from [Noah Mills on GitHub](https://github.com/itsnmills) or open a public-safe GitHub issue. Do not include PHI, credentials, private URLs, contracts, logs, patient details, or incident details.
+## What it does
 
 The core idea is simple: sensitive healthcare workflows need policy gates that run before generation, not after. A nurse attempting to access a restricted psychiatric record is blocked; a physician with an allowed treatment purpose can proceed; raw SSNs or unsupported vendor sends are stopped and logged. The `guardrails/` module is intentionally small, local-first, and dependency-light so the pattern can be inspected, reused, or wrapped as an HTTP sidecar without turning the repo into a compliance claim.
 
