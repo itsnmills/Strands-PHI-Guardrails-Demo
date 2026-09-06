@@ -397,6 +397,31 @@ table.mx{width:100%;border-collapse:collapse;font-size:var(--text-xs)}
 .main-foot .sep{color:var(--border-strong)}
 
 @keyframes fadeUp{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.pstage{display:flex;align-items:flex-start;gap:10px;padding:7px 0;animation:fadeUp .2s ease}
+.pstage .sdot{width:24px;height:24px;border-radius:50%;border:1.5px dashed var(--border-strong);display:flex;align-items:center;justify-content:center;color:var(--faint);flex-shrink:0;background:var(--surface-2)}
+.pstage.done .sdot{border-style:solid;background:var(--pass-bg);border-color:var(--pass);color:var(--pass)}
+.pstage-name{font-size:var(--text-xs);font-weight:600;color:var(--text)}
+.pstage.done .pstage-name{color:var(--muted)}
+.pstage-detail{font-size:10px;color:var(--muted);margin-top:2px;font-family:var(--font-mono);word-break:break-word}
+.think{display:inline-flex;gap:3px;align-items:center;height:10px}
+.think i{width:4px;height:4px;border-radius:50%;background:var(--accent);animation:tb 1s infinite}
+.think i:nth-child(2){animation-delay:.15s}
+.think i:nth-child(3){animation-delay:.3s}
+@keyframes tb{0%,60%,100%{transform:translateY(0);opacity:.35}30%{transform:translateY(-3px);opacity:1}}
+.lens{position:relative}
+.lens.scanning::after{content:'';position:absolute;top:0;bottom:0;left:0;width:2.5px;background:linear-gradient(180deg,transparent,var(--accent),transparent);box-shadow:0 0 14px var(--accent-glow);animation:scanX .85s linear infinite;pointer-events:none;z-index:2;border-radius:2px}
+@keyframes scanX{0%{left:0;opacity:0}8%{opacity:1}92%{opacity:1}100%{left:calc(100% - 3px);opacity:0}}
+.pipe-log{border-top:1px solid var(--divider);background:var(--surface-2);padding:9px 16px;height:118px;overflow-y:auto;flex-shrink:0}
+.pipe-log:empty::before{content:'decision log — every evaluation timestamped, replayable, exportable';font-family:var(--font-mono);font-size:9.5px;color:var(--faint)}
+.pl-line{font-family:var(--font-mono);font-size:9.5px;line-height:1.75;color:var(--muted);animation:fadeUp .16s ease;white-space:pre-wrap;word-break:break-word}
+.pl-line .lt{color:var(--faint)}
+.pl-line.ok .lv{color:var(--pass)}
+.pl-line.deny .lv{color:var(--block)}
+.pl-line.warn .lv{color:var(--warn)}
+@keyframes stampIn{0%{transform:rotate(-5deg) scale(2.1);opacity:0}55%{transform:rotate(-5deg) scale(.9);opacity:1}100%{transform:rotate(-5deg) scale(1);opacity:.9}}
+.stamp{animation:stampIn .32s cubic-bezier(.2,.9,.3,1.15) both}
+.scen.dispatching{animation:dispatch .5s ease}
+@keyframes dispatch{0%{transform:scale(1)}35%{transform:scale(.96);box-shadow:0 0 0 6px var(--accent-dim)}100%{transform:scale(1)}}
 @media (max-width:1280px){.workspace{grid-template-columns:1fr 1fr}#panel-audit{grid-column:1/-1}}
 @media (max-width:920px){
   body{grid-template-columns:1fr;grid-template-rows:56px auto 1fr}
@@ -484,7 +509,7 @@ table.mx{width:100%;border-collapse:collapse;font-size:var(--text-xs)}
           <span class="sbadge sb-role" id="badge-role"></span>
           <span class="sbadge sb-purpose" id="badge-purpose"></span>
         </div>
-        <div class="lens">
+        <div class="lens" id="lens">
           <pre class="lens-echo" id="lens-echo" aria-hidden="true"></pre>
           <textarea class="lens-area" id="prompt-input" rows="5" placeholder="Enter a clinical request, or pick a scenario above… (⌘/Ctrl + ↵ to run)" aria-label="Prompt"></textarea>
         </div>
@@ -509,6 +534,7 @@ table.mx{width:100%;border-collapse:collapse;font-size:var(--text-xs)}
           <p>Six deterministic controls run <em>before</em> any tool executes. Run a request to watch them evaluate in order.</p>
         </div>
       </div>
+      <div class="pipe-log" id="pipe-log"></div>
     </div>
 
     <div class="panel" id="panel-audit">
@@ -981,13 +1007,23 @@ function applyContext(s){
 }
 async function loadScenario(s){
   if(state.running)return;
+  const btn=document.querySelector(`.scen[data-id="${s.id}"]`);
+  if(btn){btn.classList.add('dispatching');setTimeout(()=>btn.classList.remove('dispatching'),600)}
   applyContext(s);
-  await sleep(160);
+  await sleep(200);
   runInteractive();
 }
 
 function renderTrace(res){
   const body=$('pipe-body');body.innerHTML='';
+  const log=$('pipe-log');log.innerHTML='';
+  (res.logLines||[]).forEach(l=>{
+    const d=document.createElement('div');
+    d.className='pl-line '+(l[2]||'');
+    d.innerHTML=`<span class="lt">[${l[0]}s]</span> <span class="lv">${esc(l[1])}</span>`;
+    log.appendChild(d);
+  });
+  log.scrollTop=log.scrollHeight;
   const toolChip=`<span class="dc-chip">${TOOL_NAMES[res.tool]||res.tool}</span>`;
   const target=res.vendorId?`<span class="dc-chip">→ ${esc(res.vendorId)}</span>`:(res.patientId?`<span class="dc-chip">→ ${res.patientId} · ${PATIENTS[res.patientId]?.sensitivity||''}</span>`:'');
   const intro=document.createElement('div');
@@ -1026,39 +1062,82 @@ function renderTrace(res){
     </div>`;
   body.appendChild(dec);
 }
-async function animatePipeline(res){
+async function animateDecision(res, inf, prompt){
   const body=$('pipe-body');body.innerHTML='';
-  const intro=document.createElement('div');
-  intro.className='dc-chips';intro.style.margin='0 0 10px';
-  const t=res.tool;
-  intro.innerHTML=`<span class="dc-chip">${TOOL_NAMES[t]||t}</span>${res.vendorId?`<span class="dc-chip">→ ${esc(res.vendorId)}</span>`:(res.patientId?`<span class="dc-chip">→ ${res.patientId}</span>`:'')}`;
-  body.appendChild(intro);
+  const log=$('pipe-log');log.innerHTML='';
+  const t0=performance.now();
+  const ts=()=>((performance.now()-t0)/1000).toFixed(2);
+  res.logLines=[];
+  const dlog=(msg,cls='')=>{
+    res.logLines.push([ts(),msg,cls]);
+    const d=document.createElement('div');
+    d.className='pl-line '+cls;
+    d.innerHTML=`<span class="lt">[${ts()}s]</span> <span class="lv">${esc(msg)}</span>`;
+    log.appendChild(d);log.scrollTop=log.scrollHeight;
+  };
+  const badge=$('req-badge');
+  const setStage=(t,cls)=>{badge.className='panel-badge'+(cls?' '+cls:'');badge.textContent=t;};
+
+  dlog(`session: ${res.ctx.role} · ${res.ctx.purpose}${res.ctx.justification?' · justification on file':''}`);
+  $('lens').classList.add('scanning');
+  const words=prompt.trim().split(/\s+/).length;
+  const patientBit=res.patientId?`${res.patientId} · ${PATIENTS[res.patientId].sensitivity}`:'no patient reference';
+  const vendorBit=res.tool==='send_data_to_vendor'?(res.vendorId||'unknown destination'):'n/a';
+  const stages=[
+    {name:'Reading request',detail:`${words} tokens · ${prompt.length} chars`,ms:300},
+    {name:'Loading session context',detail:`${ROLES[res.ctx.role].label} · ${res.ctx.purpose}${res.ctx.justification?' · justification':' · no justification'}`,ms:260},
+    {name:'Inferring tool intent',detail:TOOL_NAMES[res.tool]||res.tool,ms:340},
+    {name:'Resolving entities',detail:`patient: ${patientBit} · vendor: ${vendorBit}`,ms:300}
+  ];
+  for(const st of stages){
+    setStage(st.name.toLowerCase()+'…');
+    const node=document.createElement('div');
+    node.className='pstage';
+    node.innerHTML=`<div class="sdot"><span class="think"><i></i><i></i><i></i></span></div><div><div class="pstage-name">${st.name}…</div></div>`;
+    body.appendChild(node);
+    dlog(`${st.name.toLowerCase()}…`);
+    await sleep(st.ms);
+    node.classList.add('done');
+    node.innerHTML=`<div class="sdot">✓</div><div><div class="pstage-name">${st.name}</div><div class="pstage-detail">${esc(st.detail)}</div></div>`;
+    dlog(`${st.name.toLowerCase()}: ${st.detail}`);
+  }
+  $('lens').classList.remove('scanning');
+
+  const glyphs={pass:'✓',warn:'!',block:'✕',skip:'·'};
+  const names={pass:'PASS',warn:'WARN',block:'BLOCK',skip:'SKIP'};
   let resolved=0;
   for(const c of CONTROLS){
     const target=res.trace[c.id];
+    setStage(`evaluating ${c.id}…`);
     const node=document.createElement('div');
-    node.className='pnode pending';
-    node.innerHTML=`
-      <div class="pdot">${c.n}</div>
-      <div class="pmeta">
-        <div class="pname">${c.n}. ${c.label}<span class="pstatus skip">…</span></div>
-        <div class="pdetail">evaluating…</div>
-      </div>`;
+    node.className='pnode';
+    node.innerHTML=`<div class="pdot">${c.n}</div><div class="pmeta"><div class="pname">${c.n}. ${c.label}<span class="pstatus skip">…</span></div><div class="pdetail">evaluating…</div></div>`;
     body.appendChild(node);
-    await sleep(85);
-    const glyphs={pass:'✓',warn:'!',block:'✕',skip:'·'};
-    const names={pass:'PASS',warn:'WARN',block:'BLOCK',skip:'SKIP'};
+    await sleep(target.status==='skip'?110:250+Math.floor(Math.random()*170));
     node.className=`pnode ${target.status} resolved`;
-    node.innerHTML=`
-      <div class="pdot">${target.status==='skip'?'·':glyphs[target.status]}</div>
-      <div class="pmeta">
-        <div class="pname">${c.n}. ${c.label}<span class="pstatus ${target.status}">${names[target.status]}</span></div>
-        <div class="pdetail">${esc(target.detail)}</div>
-      </div>`;
+    node.innerHTML=`<div class="pdot">${target.status==='skip'?'·':glyphs[target.status]}</div><div class="pmeta"><div class="pname">${c.n}. ${c.label}<span class="pstatus ${target.status}">${names[target.status]}</span></div><div class="pdetail">${esc(target.detail)}</div></div>`;
     resolved++;
     $('pipe-badge').textContent=`${resolved}/6`;
+    dlog(`${c.id} → ${names[target.status]}${target.status==='skip'?'':': '+target.detail}`,target.status==='block'?'deny':target.status==='warn'?'warn':target.status==='pass'?'ok':'');
     if(target.status==='block')break;
   }
+  const vcls=res.outcome==='BLOCKED'?'deny':res.advisory?'warn':'ok';
+  dlog(`verdict: ${res.outcome}${res.rule?' — '+res.rule:''}`,vcls);
+  setStage(res.outcome==='BLOCKED'?'blocked':res.advisory?'allowed + advisory':'allowed',vcls);
+  const dec=document.createElement('div');
+  dec.className=`decision ${res.outcome==='BLOCKED'?'deny':'ok'}`;
+  dec.innerHTML=`
+    <div class="dc-head">
+      <span class="dc-outcome">${res.outcome}</span>
+      ${res.rule?`<span class="dc-rule">${esc(res.rule)}</span>`:'<span class="dc-rule">All checks passed</span>'}
+    </div>
+    <div class="dc-reason">${esc(res.reason||'Every control in the hierarchy passed — request proceeds to the tool layer.')}</div>
+    <div class="dc-chips">
+      <span class="dc-chip">role: ${res.ctx.role}</span>
+      <span class="dc-chip">purpose: ${res.ctx.purpose}</span>
+      ${res.advisory?'<span class="dc-chip" style="color:var(--warn);border-color:var(--warn-bd)">advisory attached</span>':''}
+    </div>`;
+  body.appendChild(dec);
 }
 
 function renderResponse(res){
@@ -1160,25 +1239,31 @@ async function runInteractive(){
   const btn=$('btn-run');btn.disabled=true;
   $('req-badge').className='panel-badge';$('req-badge').textContent='evaluating…';
   $('response-area').innerHTML='';
-  const inf=inferContext(prompt);
-  const ctx={
-    role:state.role,purpose:state.purpose,justification:state.justification,
-    tool:inf.tool,
-    inputs:{
-      patient_id:inf.patientId||undefined,
-      vendor_id:inf.vendorId||undefined,
-      data:inf.tool==='send_data_to_vendor'?prompt:undefined,
-      note:inf.tool==='log_clinical_note'?prompt:undefined
-    }
-  };
-  const res=evalToolCall(ctx);
-  res.prompt=prompt;
-  state.lastRes=res;
-  await animatePipeline(res);
-  renderResponse(res);
-  setReqBadge(res.outcome,res.advisory);
-  addAudit(res);
-  btn.disabled=false;state.running=false;
+  try{
+    const inf=inferContext(prompt);
+    const ctx={
+      role:state.role,purpose:state.purpose,justification:state.justification,
+      tool:inf.tool,
+      inputs:{
+        patient_id:inf.patientId||undefined,
+        vendor_id:inf.vendorId||undefined,
+        data:inf.tool==='send_data_to_vendor'?prompt:undefined,
+        note:inf.tool==='log_clinical_note'?prompt:undefined
+      }
+    };
+    const res=evalToolCall(ctx);
+    res.prompt=prompt;
+    state.lastRes=res;
+    await animateDecision(res, inf, prompt);
+    renderResponse(res);
+    setReqBadge(res.outcome,res.advisory);
+    addAudit(res);
+  }catch(err){
+    console.error('runInteractive failed',err);
+    $('pipe-log').innerHTML=`<div class="pl-line deny"><span class="lt">[error]</span> <span class="lv">${esc(String(err&&err.message||err))}</span></div>`;
+  }finally{
+    btn.disabled=false;state.running=false;
+  }
 }
 function resetConsole(){
   if(state.running)return;
@@ -1186,6 +1271,7 @@ function resetConsole(){
   $('response-area').innerHTML='';
   $('pipe-body').innerHTML=`<div class="empty"><span>${ic('shield',34)}</span><p>Six deterministic controls run <em>before</em> any tool executes. Run a request to watch them evaluate in order.</p></div>`;
   $('pipe-badge').textContent='0/6';
+  $('pipe-log').innerHTML='';
   setReqBadge('idle',false);
   $('req-badge').className='panel-badge';$('req-badge').textContent='idle';
   state.activeScenario=null;
@@ -1397,6 +1483,9 @@ function setTheme(t){
   $('btn-theme').innerHTML=ic(t==='dark'?'sun':'moon',15);
 }
 function initIcons(){
+  document.querySelectorAll('[data-ic]').forEach(el=>{
+    el.innerHTML=ic(el.dataset.ic,parseInt(el.dataset.sz||'16',10));
+  });
   document.querySelector('a[title="GitHub repository"]').innerHTML=ic('github',15);
   $('btn-run').innerHTML=`${ic('play',14)}<span>Run Guardrails</span>`;
   $('btn-reset').innerHTML=`${ic('rotate',13)}<span>Reset</span>`;

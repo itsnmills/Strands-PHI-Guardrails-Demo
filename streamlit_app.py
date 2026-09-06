@@ -7,7 +7,8 @@ Healthcare AI guardrail demo. Two engines, one policy:
   • Deterministic — the shared policy engine (app/guardrails/policy_engine.py),
     no LLM, no API key, instant evaluation of every control.
   • Live agent — a role-scoped Strands agent whose SteeringHandler enforces
-    the same controls before any tool executes.
+    the same controls before any tool executes, streamed live:
+    model tokens → tool request → steering decision → tool execution → answer.
 
 Run:  pip install -r requirements.txt && streamlit run streamlit_app.py
 """
@@ -16,6 +17,8 @@ import os
 import io
 import csv
 import json
+import time
+import asyncio
 import datetime
 from dataclasses import asdict
 
@@ -121,18 +124,6 @@ RULE_TO_CONTROL = (
 )
 EVAL_INDEX = {"rbac": 0, "pou": 1, "sens": 2, "baa": 3, "phi": 4, "minnec": 5}
 DISPLAY_EVAL = {"rbac": 0, "pou": 1, "baa": 3, "phi": 4, "sens": 2, "minnec": 5}
-RULE_PREFIX_MAP = {
-    "RBAC: Record Access Denied": "rbac",
-    "RBAC: Role Not Authorized": "rbac",
-    "RBAC: Billing Cannot Log Clinical Notes": "rbac",
-    "Purpose-of-Use Violation": "pou",
-    "Purpose-of-Use: Missing Justification": "pou",
-    "Sensitivity Tier: Access Denied": "sens",
-    "BAA: Blocked Consumer Platform": "baa",
-    "BAA: Unregistered Vendor": "baa",
-    "BAA: Sensitivity Tier Mismatch": "baa",
-    "PHI Output Filter: Raw PHI Detected": "phi",
-}
 
 SCENARIOS = [
     {"id": "A1", "type": "ok", "label": "Physician · treat query", "desc": "STANDARD record for treatment", "cid": "E001",
@@ -243,11 +234,12 @@ def simulated_output(result) -> str:
         return json.dumps({
             "status": "SUCCESS", "transmission_id": f"TX-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d%H%M%S')}",
             "vendor": vendor.display_name if vendor else vid, "baa_expiry": vendor.baa_expiry if vendor else None,
-            "patient_ref": f"ANON-{pid}", "bytes_transmitted": len((result.reason or '').encode()) or 128,
+            "patient_ref": f"ANON-{pid}", "bytes_transmitted": 128,
             "note": "Transmission logged to audit trail.",
         }, indent=2)
     if result.tool == "log_clinical_note":
-        return json.dumps({"status": "LOGGED", "patient_ref": f"ANON-{pid}", "phi_status": "AUTO-REDACTED" if result.phi and result.phi.phi_found else "CLEAN",
+        return json.dumps({"status": "LOGGED", "patient_ref": f"ANON-{pid}",
+                           "phi_status": "AUTO-REDACTED" if result.phi and result.phi.phi_found else "CLEAN",
                            "note": "Clinical note logged to EHR."}, indent=2)
     if result.tool == "check_vendor_baa_status":
         vid = result.vendor_id or ""
@@ -259,6 +251,16 @@ def simulated_output(result) -> str:
                                "allowed_sensitivity_tiers": vendor.allowed_sensitivity}, indent=2)
         return json.dumps({"vendor_id": vid, "baa_status": "NOT_REGISTERED"}, indent=2)
     return "OK"
+
+
+def det_inputs_for(inf: dict, prompt: str, tool: str | None = None) -> dict:
+    tool = tool or inf["tool"]
+    return {
+        "patient_id": inf.get("patient_id"),
+        "vendor_id": inf.get("vendor_id"),
+        "data": prompt if tool == "send_data_to_vendor" else None,
+        "note": prompt if tool == "log_clinical_note" else None,
+    }
 
 
 def audit_event_from_result(result, mode: str) -> dict:
@@ -280,22 +282,16 @@ def audit_event_from_result(result, mode: str) -> dict:
     }
 
 
-def run_deterministic(prompt: str):
+def run_deterministic(prompt: str, pipe_slot, resp_slot):
     inf = infer_context(prompt)
     result = evaluate(
         role=st.session_state.role, purpose=st.session_state.purpose,
         justification=st.session_state.justification,
-        tool_name=inf["tool"],
-        tool_inputs={
-            "patient_id": inf.get("patient_id"),
-            "vendor_id": inf.get("vendor_id"),
-            "data": prompt if inf["tool"] == "send_data_to_vendor" else None,
-            "note": prompt if inf["tool"] == "log_clinical_note" else None,
-        },
+        tool_name=inf["tool"], tool_inputs=det_inputs_for(inf, prompt),
     )
+    steps = [(c.control, c.label, c.status, c.detail) for c in result.steps]
     st.session_state.last_run = {
-        "mode": "det", "result": result,
-        "steps": [(c.control, c.label, c.status, c.detail) for c in result.steps],
+        "mode": "det", "result": result, "steps": steps,
         "outcome": result.outcome, "rule": result.rule, "reason": result.reason,
         "advisory": result.advisory, "tool": result.tool,
         "vendor_id": result.vendor_id, "patient_id": result.patient_id,
@@ -304,136 +300,186 @@ def run_deterministic(prompt: str):
                   for m in result.phi.matches] if result.phi else [],
         "redacted": result.phi.redacted_text if result.phi else None,
         "risk": result.phi.risk_score if result.phi else 0.0,
+        "overlay": None,
     }
+    role_label = ROLE_DISPLAY[st.session_state.role]
+    patient_bit = f"{result.patient_id} · {PATIENT_DB[result.patient_id].sensitivity}" if result.patient_id else "none"
+    vendor_bit = result.vendor_id or ("unknown destination" if result.tool == "send_data_to_vendor" else "n/a")
+    stages = [
+        ("Reading request", f"{len(prompt.split())} tokens · {len(prompt)} chars"),
+        ("Loading session context", f"{role_label} · {st.session_state.purpose}" + (" · justification on file" if st.session_state.justification else " · no justification")),
+        ("Inferring tool intent", TOOL_NAMES.get(result.tool, result.tool)),
+        ("Resolving entities", f"patient: {patient_bit} · vendor: {vendor_bit}"),
+    ]
+    for i in range(len(stages)):
+        view = {"tool": result.tool, "vendor": result.vendor_id, "patient": result.patient_id,
+                "stages": [(n, d, j < i) for j, (n, d) in enumerate(stages)]}
+        pipe_slot.markdown(pipeline_html(view), unsafe_allow_html=True)
+        time.sleep(0.24)
+    done_stages = [(n, d, True) for n, d in stages]
+    for i, (cid, label, status, detail) in enumerate(steps):
+        view = {"tool": result.tool, "vendor": result.vendor_id, "patient": result.patient_id,
+                "stages": done_stages, "steps": steps[:i + 1],
+                "live_stage": f"evaluating {cid}"}
+        pipe_slot.markdown(pipeline_html(view), unsafe_allow_html=True)
+        time.sleep(0.13 if status == "skip" else 0.30)
+        if status == "block":
+            break
     st.session_state.audit_events.insert(0, audit_event_from_result(result, "deterministic"))
 
 
-def run_live(prompt: str):
+def live_transcript_html(prog: dict) -> str:
+    parts = [f'<div class="stagechip run"><span class="think"><i></i><i></i><i></i></span>{prog["stage"]}</div>']
+    for outcome, rule in prog["steer"]:
+        cls = "deny" if outcome == "BLOCKED" else "ok"
+        glyph = "✕" if outcome == "BLOCKED" else "✓"
+        parts.append(f'<div class="pline done" style="padding:5px 0"><div class="ldot">{glyph}</div>'
+                     f'<div><div class="lname" style="color:var(--{ "block" if outcome == "BLOCKED" else "pass"})">{outcome}</div>'
+                     f'<div class="ldetail">{rule}</div></div></div>')
+    if prog["text"]:
+        tail = prog["text"][-720:]
+        parts.append(f'<div class="livebox">{tail}</div>')
+    return '<div style="display:flex;flex-direction:column;gap:8px">' + "".join(parts) + "</div>"
+
+
+def run_live(prompt: str, pipe_slot, resp_slot):
     from app.agent.factory import create_agent
     logger: AuditLogger = st.session_state.audit_logger
+    inf = infer_context(prompt)
     try:
         agent, steering = create_agent(
             role=st.session_state.role, actor_id=st.session_state.actor_id,
             purpose=st.session_state.purpose, justification=st.session_state.justification,
             audit_logger=logger,
         )
-        response = agent(prompt)
     except Exception as e:
-        inf = infer_context(prompt)
-        result = evaluate(
-            role=st.session_state.role, purpose=st.session_state.purpose,
-            justification=st.session_state.justification,
-            tool_name=inf["tool"],
-            tool_inputs={
-                "patient_id": inf.get("patient_id"),
-                "vendor_id": inf.get("vendor_id"),
-                "data": prompt if inf["tool"] == "send_data_to_vendor" else None,
-                "note": prompt if inf["tool"] == "log_clinical_note" else None,
-            },
-        )
-        st.session_state.last_run = {
-            "mode": "live", "result": None,
-            "steps": [(c.control, c.label, c.status, c.detail) for c in result.steps],
-            "outcome": result.outcome, "rule": result.rule, "reason": result.reason,
-            "advisory": result.advisory, "tool": result.tool,
-            "vendor_id": result.vendor_id, "patient_id": result.patient_id,
-            "prompt": prompt, "response_text": None,
-            "spans": [{"type": m.phi_type, "conf": m.confidence, "start": m.start, "end": m.end, "text": m.matched_text}
-                      for m in result.phi.matches] if result.phi else [],
-            "redacted": result.phi.redacted_text if result.phi else None,
-            "risk": result.phi.risk_score if result.phi else 0.0,
-            "overlay": f"Live agent unavailable ({type(e).__name__}) — showing deterministic policy echo of the implied tool call instead.",
-            "error": str(e),
-        }
-        st.session_state.audit_events.insert(0, audit_event_from_result(result, "live/policy-echo"))
+        _live_fallback(prompt, pipe_slot, None, f"Agent construction failed ({type(e).__name__}) — deterministic policy echo shown instead.")
         return
+
+    prog = {"stage": "dispatching to model", "tool": None, "text": "", "steer": [], "ev": 0, "chunks": 0}
+
+    def draw():
+        view = {
+            "tool": inf["tool"], "vendor": inf.get("vendor_id"), "patient": inf.get("patient_id"),
+            "stages": [
+                ("Session context loaded", f"{ROLE_DISPLAY[st.session_state.role]} · {st.session_state.purpose}", True),
+                ("Prompt parsed", f"tool intent: {TOOL_NAMES.get(inf['tool'], inf['tool'])}", True),
+            ],
+            "live_stage": prog["stage"],
+            "steer_lines": prog["steer"],
+        }
+        pipe_slot.markdown(pipeline_html(view), unsafe_allow_html=True)
+        resp_slot.markdown(live_transcript_html(prog), unsafe_allow_html=True)
+
+    draw()
+
+    async def consume():
+        async for ev in agent.stream_async(prompt):
+            if "model_stream_update" in ev:
+                d = (ev.get("model_stream_update") or {}).get("delta") or {}
+                tu = d.get("toolUse")
+                if tu and tu.get("name") and tu["name"] != prog["tool"]:
+                    prog["tool"] = tu["name"]
+                    prog["stage"] = f"model requested {TOOL_NAMES.get(tu['name'], tu['name'])}"
+                    draw()
+                if d.get("text"):
+                    if prog["stage"] in ("dispatching to model", "tool executed — composing answer"):
+                        prog["stage"] = "model streaming" if not prog["steer"] else "composing answer"
+                    prog["text"] += d["text"]
+                    prog["chunks"] += 1
+                    if prog["chunks"] % 6 == 0:
+                        draw()
+            elif any(k in ev for k in ("before_tool_call_event", "before_tool_call", "current_tool_use")):
+                if not prog["steer"]:
+                    prog["stage"] = "steering: evaluating six controls"
+                    draw()
+            if len(steering.guardrail_events) > prog["ev"]:
+                for e in steering.guardrail_events[prog["ev"]:]:
+                    prog["steer"].append((e.get("outcome"), e.get("rule") or e.get("tool", "")))
+                prog["ev"] = len(steering.guardrail_events)
+                last = steering.guardrail_events[-1]
+                suffix = f" — {last['rule']}" if last.get("rule") else ""
+                prog["stage"] = f"steering decision: {last['outcome']}{suffix}"
+                draw()
+            if "tool_result_message_added" in ev and prog["stage"] != "tool executed — composing answer":
+                prog["stage"] = "tool executed — composing answer"
+                draw()
+
+    try:
+        asyncio.run(consume())
+    except Exception as e:
+        _live_fallback(prompt, pipe_slot, None, f"Live agent interrupted ({type(e).__name__}) — deterministic policy echo shown instead.")
+        return
+
     events = steering.guardrail_events
-    if not events:
-        inf = infer_context(prompt)
-        result = evaluate(
-            role=st.session_state.role, purpose=st.session_state.purpose,
-            justification=st.session_state.justification,
-            tool_name=inf["tool"],
-            tool_inputs={
-                "patient_id": inf.get("patient_id"),
-                "vendor_id": inf.get("vendor_id"),
-                "data": prompt if inf["tool"] == "send_data_to_vendor" else None,
-                "note": prompt if inf["tool"] == "log_clinical_note" else None,
-            },
-        )
-        st.session_state.last_run = {
-            "mode": "live", "result": None,
-            "steps": [(c.control, c.label, c.status, c.detail) for c in result.steps],
-            "outcome": result.outcome, "rule": result.rule, "reason": result.reason,
-            "advisory": result.advisory, "tool": result.tool,
-            "vendor_id": result.vendor_id, "patient_id": result.patient_id,
-            "prompt": prompt, "response_text": str(response),
-            "spans": [{"type": m.phi_type, "conf": m.confidence, "start": m.start, "end": m.end, "text": m.matched_text}
-                      for m in result.phi.matches] if result.phi else [],
-            "redacted": result.phi.redacted_text if result.phi else None,
-            "risk": result.phi.risk_score if result.phi else 0.0,
-            "overlay": "The model answered without calling a tool, so the steering handler never ran. "
-                       "This pipeline is a deterministic policy echo of the implied tool call.",
-        }
-        st.session_state.audit_events.insert(0, audit_event_from_result(result, "live/policy-echo"))
-        return
     blocked = next((e for e in events if e.get("outcome") == "BLOCKED"), None)
-    warned = any(e.get("outcome") == "WARNING" for e in events)
-    blocked_ctrl = None
-    if blocked:
-        for fragment, ctrl in RULE_TO_CONTROL:
-            if fragment in blocked.get("rule", ""):
-                blocked_ctrl = ctrl
-                break
-    bidx = EVAL_INDEX[blocked_ctrl] if blocked_ctrl else 99
-    tool = infer_context(prompt)["tool"]
-    if blocked:
-        tool = blocked.get("tool", tool)
-    steps = []
-    for cid, label in CONTROL_ORDER:
-        idx = DISPLAY_EVAL[cid]
-        if blocked_ctrl and idx == bidx:
-            steps.append((cid, label, "block", blocked.get("reason", "")))
-        elif cid == "phi" and warned and not blocked:
-            steps.append((cid, label, "warn", "PHI auto-redacted before execution"))
-        elif cid == "minnec":
-            steps.append((cid, label, "pass" if not blocked else "skip",
-                          "Evaluated by the tool layer" if not blocked else "Not evaluated"))
-        elif blocked and idx > bidx:
-            steps.append((cid, label, "skip", "Not applicable to this action"))
-        elif cid in ("sens",) and tool != "query_patient_record":
-            steps.append((cid, label, "skip", "Not applicable to this action"))
-        elif cid in ("baa", "phi") and tool not in ("send_data_to_vendor", "log_clinical_note"):
-            steps.append((cid, label, "skip", "Not applicable to this action"))
-        else:
-            steps.append((cid, label, "pass", "Verified by the steering handler"))
+    tool_eff = (blocked or {}).get("tool") or prog["tool"] or inf["tool"]
+    det = evaluate(
+        role=st.session_state.role, purpose=st.session_state.purpose,
+        justification=st.session_state.justification,
+        tool_name=tool_eff, tool_inputs=det_inputs_for(inf, prompt, tool_eff),
+    )
     outcome = "BLOCKED" if blocked else "ALLOWED"
-    reason = blocked.get("reason") if blocked else None
-    rule = blocked.get("rule") if blocked else None
     st.session_state.last_run = {
-        "mode": "live", "result": None, "steps": steps, "outcome": outcome, "rule": rule,
-        "reason": reason, "advisory": None, "tool": tool,
-        "vendor_id": (blocked or {}).get("vendor_id"), "patient_id": (blocked or {}).get("patient_id"),
-        "prompt": prompt, "response_text": str(response), "spans": [], "redacted": None, "risk": 0.0,
-        "overlay": None,
+        "mode": "live", "result": None,
+        "steps": [(c.control, c.label, c.status, c.detail) for c in det.steps],
+        "outcome": outcome, "rule": blocked.get("rule") if blocked else None,
+        "reason": blocked.get("reason") if blocked else None,
+        "advisory": det.advisory, "tool": tool_eff,
+        "vendor_id": (blocked or {}).get("vendor_id") or inf.get("vendor_id"),
+        "patient_id": (blocked or {}).get("patient_id") or inf.get("patient_id"),
+        "prompt": prompt, "response_text": prog["text"].strip() or None,
+        "spans": [{"type": m.phi_type, "conf": m.confidence, "start": m.start, "end": m.end, "text": m.matched_text}
+                  for m in det.phi.matches] if det.phi else [],
+        "redacted": det.phi.redacted_text if det.phi else None,
+        "risk": det.phi.risk_score if det.phi else 0.0,
+        "overlay": None if events else "The model answered without calling a tool, so the steering handler never ran. "
+                                        "This pipeline is a deterministic policy echo of the implied tool call.",
     }
-    for ev in logger.events:
-        d = asdict(ev)
-        d["_res"] = None
-        d["action_description"] = f"[live] {d['action_description']}"
-        if not any(x["event_id"] == d["event_id"] for x in st.session_state.audit_events):
-            st.session_state.audit_events.insert(0, d)
+    if events:
+        for ev in logger.events:
+            d = asdict(ev)
+            d["_res"] = None
+            d["action_description"] = f"[live] {d['action_description']}"
+            if not any(x["event_id"] == d["event_id"] for x in st.session_state.audit_events):
+                st.session_state.audit_events.insert(0, d)
+    else:
+        st.session_state.audit_events.insert(0, audit_event_from_result(det, "live/policy-echo"))
 
 
-def run_current():
+def _live_fallback(prompt: str, pipe_slot, resp_slot, note: str):
+    inf = infer_context(prompt)
+    result = evaluate(
+        role=st.session_state.role, purpose=st.session_state.purpose,
+        justification=st.session_state.justification,
+        tool_name=inf["tool"], tool_inputs=det_inputs_for(inf, prompt),
+    )
+    st.session_state.last_run = {
+        "mode": "live", "result": None,
+        "steps": [(c.control, c.label, c.status, c.detail) for c in result.steps],
+        "outcome": result.outcome, "rule": result.rule, "reason": result.reason,
+        "advisory": result.advisory, "tool": result.tool,
+        "vendor_id": result.vendor_id, "patient_id": result.patient_id,
+        "prompt": prompt, "response_text": None,
+        "spans": [{"type": m.phi_type, "conf": m.confidence, "start": m.start, "end": m.end, "text": m.matched_text}
+                  for m in result.phi.matches] if result.phi else [],
+        "redacted": result.phi.redacted_text if result.phi else None,
+        "risk": result.phi.risk_score if result.phi else 0.0,
+        "overlay": note,
+        "error": note,
+    }
+    st.session_state.audit_events.insert(0, audit_event_from_result(result, "live/policy-echo"))
+
+
+def run_current(pipe_slot, resp_slot):
     prompt = st.session_state.get("prompt_text", "").strip()
     if not prompt:
         return
     st.session_state.run_count += 1
     if st.session_state.mode == "live":
-        run_live(prompt)
+        run_live(prompt, pipe_slot, resp_slot)
     else:
-        run_deterministic(prompt)
+        run_deterministic(prompt, pipe_slot, resp_slot)
 
 
 def apply_scenario(s: dict):
@@ -470,7 +516,7 @@ CHIP_CSS = """
 .bdg.deny{background:var(--block-bg);color:var(--block);border-color:var(--block-bd)}
 .bdg.warn{background:var(--warn-bg);color:var(--warn);border-color:var(--warn-bd)}
 .bdg.mono{font-family:'IBM Plex Mono',monospace;font-weight:500}
-.pstep{display:flex;gap:10px;padding:7px 0;align-items:flex-start}
+.pstep{display:flex;gap:10px;padding:7px 0;align-items:flex-start;animation:fadeUp .22s ease}
 .pdot{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:600;border:1.5px solid;flex-shrink:0;margin-top:1px}
 .pdot.pass{background:var(--pass-bg);border-color:var(--pass);color:var(--pass)}
 .pdot.warn{background:var(--warn-bg);border-color:var(--warn);color:var(--warn)}
@@ -479,10 +525,26 @@ CHIP_CSS = """
 .pname{font-size:12.5px;font-weight:600;color:var(--text)}
 .pname.skip{color:var(--faint)}.pname.block{color:var(--block)}
 .pdet{font-size:11px;color:var(--muted);line-height:1.5;margin-top:2px}
+.pline{display:flex;gap:10px;padding:6px 0;align-items:flex-start;animation:fadeUp .22s ease}
+.pline .ldot{width:22px;height:22px;border-radius:50%;border:1.5px dashed var(--border-strong);display:flex;align-items:center;justify-content:center;color:var(--faint);flex-shrink:0;background:var(--surface-2);font-size:10px}
+.pline.done .ldot{border-style:solid;background:var(--pass-bg);border-color:var(--pass);color:var(--pass)}
+.lname{font-size:12px;font-weight:600;color:var(--text)}
+.ldetail{font-size:10.5px;color:var(--muted);margin-top:2px;font-family:'IBM Plex Mono',monospace;word-break:break-word}
+.think{display:inline-flex;gap:3px;align-items:center;height:10px}
+.think i{width:4px;height:4px;border-radius:50%;background:var(--accent);animation:tb 1s infinite}
+.think i:nth-child(2){animation-delay:.15s}
+.think i:nth-child(3){animation-delay:.3s}
+@keyframes tb{0%,60%,100%{transform:translateY(0);opacity:.35}30%{transform:translateY(-3px);opacity:1}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes stampIn{0%{transform:rotate(-5deg) scale(2.1);opacity:0}55%{transform:rotate(-5deg) scale(.9);opacity:1}100%{transform:rotate(-5deg) scale(1);opacity:.9}}
+.stagechip{display:inline-flex;align-items:center;gap:7px;font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;padding:4px 11px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--muted);margin-bottom:6px}
+.stagechip.run{border-color:var(--accent);color:var(--accent);background:var(--accent-dim)}
+.stagechip.done{border-color:var(--pass-bd);color:var(--pass);background:var(--pass-bg)}
+.livebox{border:1px solid var(--border);border-radius:8px;background:var(--surface-2);padding:10px 12px;font-family:'IBM Plex Mono',monospace;font-size:11px;line-height:1.6;max-height:190px;overflow:auto;white-space:pre-wrap;word-break:break-word}
 .resp{border:1px solid var(--border);border-radius:12px;padding:16px 18px;background:var(--surface-2);position:relative}
 .resp.ok{border-color:var(--pass-bd);background:var(--pass-bg)}
 .resp.deny{border-color:var(--block-bd);background:var(--block-bg)}
-.stamp{position:absolute;top:10px;right:12px;transform:rotate(-5deg);font-family:'Space Grotesk';font-weight:700;font-size:10px;letter-spacing:.16em;text-transform:uppercase;padding:4px 10px;border:2px solid currentColor;border-radius:5px;opacity:.9}
+.stamp{position:absolute;top:10px;right:12px;transform:rotate(-5deg);font-family:'Space Grotesk';font-weight:700;font-size:10px;letter-spacing:.16em;text-transform:uppercase;padding:4px 10px;border:2px solid currentColor;border-radius:5px;opacity:.9;animation:stampIn .32s cubic-bezier(.2,.9,.3,1.15) both}
 .resp.deny .stamp{color:var(--block)}.resp.ok .stamp{color:var(--pass)}
 .resp .rule{font-family:'Space Grotesk';font-weight:600;font-size:14px;color:var(--ink);margin-bottom:4px}
 .resp .why{font-size:12px;line-height:1.6;color:var(--text)}
@@ -495,14 +557,6 @@ CHIP_CSS = """
 .ph.lo{background:rgba(180,83,9,.13);box-shadow:inset 0 -2px 0 var(--warn)}
 .pay{border:1px solid var(--border);border-radius:8px;overflow:hidden;background:var(--surface);margin-top:10px}
 .pay-body{padding:10px 12px;font-family:'IBM Plex Mono',monospace;font-size:11px;line-height:1.65;max-height:150px;overflow:auto;white-space:pre-wrap;word-break:break-word}
-.mx{width:100%;border-collapse:collapse;font-size:11px;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}
-.mx th{background:var(--surface-2);font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);padding:8px 9px;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap}
-.mx td{padding:7px 9px;border-bottom:1px solid var(--divider);vertical-align:middle}
-.gl{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:6px;font-size:11px;font-weight:700;border:1px solid}
-.gl.pass{color:var(--pass);background:var(--pass-bg);border-color:var(--pass-bd)}
-.gl.warn{color:var(--warn);background:var(--warn-bg);border-color:var(--warn-bd)}
-.gl.block{color:var(--block);background:var(--block-bg);border-color:var(--block-bd)}
-.gl.skip{color:var(--faint);border-color:var(--divider)}
 .ae-kv{display:flex;gap:10px;font-size:10.5px;padding:2px 0}
 .ae-k{font-family:'IBM Plex Mono',monospace;color:var(--faint);width:92px;flex-shrink:0;text-transform:uppercase;letter-spacing:.04em}
 .ae-v{font-family:'IBM Plex Mono',monospace;color:var(--muted);word-break:break-word}
@@ -514,6 +568,108 @@ CHIP_CSS = """
 st.markdown(CHIP_CSS, unsafe_allow_html=True)
 
 GLYPH = {"pass": "✓", "warn": "!", "block": "✕", "skip": "·"}
+
+
+def pipeline_html(view: dict) -> str:
+    parts = []
+    chips = []
+    if view.get("tool"):
+        chips.append(f'<span class="bdg mono" style="background:var(--surface-2);color:var(--muted);border-color:var(--border);margin-right:5px">{TOOL_NAMES.get(view["tool"], view["tool"])}</span>')
+    if view.get("vendor"):
+        chips.append(f'<span class="bdg mono" style="background:var(--surface-2);color:var(--muted);border-color:var(--border);margin-right:0">→ {view["vendor"]}</span>')
+    elif view.get("patient"):
+        chips.append(f'<span class="bdg mono" style="background:var(--surface-2);color:var(--muted);border-color:var(--border);margin-right:0">→ {view["patient"]}</span>')
+    if chips:
+        parts.append('<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">' + "".join(chips) + "</div>")
+    if view.get("live_stage"):
+        parts.append(f'<div class="stagechip run"><span class="think"><i></i><i></i><i></i></span>{view["live_stage"]}</div>')
+    elif view.get("stage_done"):
+        parts.append(f'<div class="stagechip done">✓ {view["stage_done"]}</div>')
+    for (name, detail, done) in view.get("stages", []):
+        dot = "✓" if done else '<span class="think"><i></i><i></i><i></i></span>'
+        parts.append(f'<div class="pline {"done" if done else ""}"><div class="ldot">{dot}</div>'
+                     f'<div><div class="lname">{name}{"…" if not done else ""}</div>'
+                     f'<div class="ldetail">{detail if done else "working"}</div></div></div>')
+    for (cid, label, status, detail) in view.get("steps", []):
+        parts.append(f'<div class="pstep"><div class="pdot {status}">{GLYPH[status]}</div>'
+                     f'<div><div class="pname {status}">{label}</div><div class="pdet">{detail}</div></div></div>')
+    for outcome, rule in view.get("steer_lines", []):
+        cls = "deny" if outcome == "BLOCKED" else "ok"
+        glyph = "✕" if outcome == "BLOCKED" else "✓"
+        parts.append(f'<div class="pline done"><div class="ldot">{glyph}</div>'
+                     f'<div><div class="lname" style="color:var(--{"block" if outcome == "BLOCKED" else "pass"})">{outcome}</div>'
+                     f'<div class="ldetail">{rule}</div></div></div>')
+    if view.get("outcome"):
+        ok = view["outcome"] != "BLOCKED"
+        parts.append(f'<div class="resp {"ok" if ok else "deny"}" style="margin-top:8px">'
+                     f'<div class="rule">{view.get("rule") or "All checks passed"}</div>'
+                     f'<div class="why">{view.get("reason") or "Every control in the hierarchy passed."}</div></div>')
+    if view.get("overlay"):
+        parts.append(f'<div class="adv">{view["overlay"]}</div>')
+    if not parts:
+        parts.append('<div class="pline"><div class="ldot">·</div><div><div class="lname">Idle</div>'
+                     '<div class="ldetail">Six deterministic controls run before any tool executes. Run a request to watch them evaluate in order.</div></div></div>')
+    return '<div style="display:flex;flex-direction:column">' + "".join(parts) + "</div>"
+
+
+def view_from_run(run: dict) -> dict:
+    if not run:
+        return {}
+    return {
+        "tool": run["tool"], "vendor": run.get("vendor_id"), "patient": run.get("patient_id"),
+        "steps": run["steps"], "outcome": run["outcome"], "rule": run["rule"], "reason": run["reason"],
+        "overlay": run.get("overlay"),
+        "stage_done": f"{run['mode']} engine · verdict {run['outcome']}",
+    }
+
+
+def response_html(run: dict) -> str:
+    if not run:
+        return ('<div class="pline"><div class="ldot">·</div><div><div class="lname">No request yet</div>'
+                '<div class="ldetail">Pick a scenario above or type a clinical request, then run the guardrails.</div></div></div>')
+    parts = []
+    if run.get("error"):
+        parts.append(f'<div class="adv">Live agent unavailable: {run["error"][:180]}</div>')
+    ok = run["outcome"] != "BLOCKED"
+    stamp = "Access denied" if not ok else ("Allowed + advisory" if run["advisory"] else "Authorized")
+    rule = run["rule"] or "All HIPAA guardrail checks passed"
+    reason = run["reason"] or f"Request authorized for {TOOL_NAMES.get(run['tool'], run['tool'])}."
+    parts.append(
+        f"""<div class="resp {'ok' if ok else 'deny'}">
+        <span class="stamp">{stamp}</span>
+        <div class="rule">{run['outcome']} — {rule}</div>
+        <div class="why">{reason}</div></div>"""
+    )
+    if run["advisory"]:
+        parts.append(f'<div class="adv">{run["advisory"]}</div>')
+    if run.get("risk") and run["risk"] > 0:
+        r = run["risk"]
+        cls, lbl = ("block", "HIGH RISK") if r >= .6 else (("warn", "MODERATE") if r >= .3 else ("pass", "LOW RISK"))
+        color = {"block": "var(--block)", "warn": "var(--warn)", "pass": "var(--pass)"}[cls]
+        parts.append(
+            f'<div class="risk-head"><span>PHI risk score</span><span style="color:{color};font-weight:600">{lbl} · {r:.2f}</span></div>'
+            f'<div class="risk-track"><div class="risk-fill" style="width:{round(r * 100)}%;background:{color}"></div></div>'
+        )
+    if run.get("spans"):
+        prompt_now = run.get("prompt") or ""
+        flagged, last = [], 0
+        for m in run["spans"]:
+            flagged.append(prompt_now[last:m["start"]].replace("<", "&lt;"))
+            cls = "hi" if m["conf"] >= 0.70 else "lo"
+            flagged.append(f'<span class="ph {cls}" title="{m["type"]} · {m["conf"]:.2f}">{m["text"].replace("<", "&lt;")}</span>')
+            last = m["end"]
+        flagged.append(prompt_now[last:].replace("<", "&lt;"))
+        parts.append('<div style="font-family:\'IBM Plex Mono\',monospace;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-top:12px">Payload · raw · flagged</div>')
+        parts.append(f'<div class="pay"><div class="pay-body">{"".join(flagged)}</div></div>')
+        parts.append('<div style="font-family:\'IBM Plex Mono\',monospace;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-top:10px">Payload · redacted</div>')
+        red = (run.get("redacted") or "").replace("<", "&lt;")
+        parts.append(f'<div class="pay"><div class="pay-body">{red}</div></div>')
+    if run.get("response_text"):
+        label = "Simulated tool output" if run["mode"] == "det" else "Agent response"
+        parts.append(f'<div style="font-family:\'IBM Plex Mono\',monospace;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-top:10px">{label}</div>')
+        body = run["response_text"].replace("<", "&lt;")
+        parts.append(f'<div class="pay"><div class="pay-body">{body}</div></div>')
+    return '<div style="display:flex;flex-direction:column;gap:2px">' + "".join(parts) + "</div>"
 
 
 def init_state():
@@ -560,7 +716,7 @@ with st.sidebar:
         index=0 if st.session_state.mode == "det" or not has_key else 1,
         horizontal=True,
         disabled=not has_key,
-        help="Deterministic runs the shared policy engine with no LLM. Live agent routes every tool call through the Strands SteeringHandler.",
+        help="Deterministic runs the shared policy engine with no LLM. Live agent streams the model, the tool request, the steering decision and the answer.",
     )
     st.session_state.mode = "det" if (mode.startswith("Deterministic") or not has_key) else "live"
     if not has_key:
@@ -646,23 +802,37 @@ with scols[1]:
 with scols[2]:
     st.markdown(badge("1 advisory", "warn"), unsafe_allow_html=True)
 with scols[3]:
-    st.caption("Click a scenario to set context and run it.")
+    st.caption("Click a scenario to set context and watch the evaluation live.")
 
-for stype, label in (("ok", None), ("deny", None), ("adv", None)):
+for stype in ("ok", "deny", "adv"):
     group = [s for s in SCENARIOS if s["type"] == stype]
     cols = st.columns(len(group))
     for col, s in zip(cols, group):
         with col:
             if st.button(f"{s['label']}\n\n{s['desc']}  ·  {s['cid']}", key=f"scen_{s['id']}", use_container_width=True):
-                apply_scenario(s)
-                run_current()
+                st.session_state["pending_scenario"] = s["id"]
+                st.rerun()
+
+if st.session_state.pop("do_reset", False):
+    st.session_state.last_run = None
+    st.session_state.prompt_text = ""
+    st.session_state.active_scenario = None
+
+pending_scenario = st.session_state.pop("pending_scenario", None)
+if pending_scenario:
+    apply_scenario(next(s for s in SCENARIOS if s["id"] == pending_scenario))
+    st.session_state["do_run"] = True
 
 st.divider()
 
 c_req, c_pipe, c_aud = st.columns([1.15, 1, 1.05], gap="medium")
 
+with c_pipe:
+    st.markdown("#### Policy pipeline")
+with c_aud:
+    st.markdown("#### Audit trail · §164.312(b)")
+
 with c_req:
-    st.markdown("#### Request console")
     st.markdown(
         badge(ROLE_DISPLAY[st.session_state.role], "role")
         + badge(st.session_state.purpose, "purpose"),
@@ -690,96 +860,24 @@ with c_req:
     b1, b2 = st.columns([2, 1])
     with b1:
         if st.button("Run Guardrails", type="primary", use_container_width=True):
-            run_current()
+            st.session_state["do_run"] = True
     with b2:
         if st.button("Reset", use_container_width=True):
-            st.session_state.last_run = None
-            st.session_state.prompt_text = ""
-            st.session_state.active_scenario = None
+            st.session_state["do_reset"] = True
             st.rerun()
 
-    run = st.session_state.last_run
-    if run and run.get("error"):
-        st.warning(f"Live agent unavailable: {run['error'][:180]}", icon="⚠")
-    if run:
-        ok = run["outcome"] != "BLOCKED"
-        stamp = "Access denied" if not ok else ("Allowed + advisory" if run["advisory"] else "Authorized")
-        rule = run["rule"] or "All HIPAA guardrail checks passed"
-        reason = run["reason"] or f"Request authorized for {TOOL_NAMES.get(run['tool'], run['tool'])}."
-        st.markdown(
-            f"""<div class="resp {'ok' if ok else 'deny'}">
-            <span class="stamp">{stamp}</span>
-            <div class="rule">{run['outcome']} — {rule}</div>
-            <div class="why">{reason}</div></div>""",
-            unsafe_allow_html=True,
-        )
-        if run["advisory"]:
-            st.markdown(f'<div class="adv">{run["advisory"]}</div>', unsafe_allow_html=True)
-        if run.get("risk") and run["risk"] > 0:
-            r = run["risk"]
-            cls, lbl = ("block", "HIGH RISK") if r >= .6 else (("warn", "MODERATE") if r >= .3 else ("pass", "LOW RISK"))
-            color = {"block": "var(--block)", "warn": "var(--warn)", "pass": "var(--pass)"}[cls]
-            st.markdown(
-                f'<div class="risk-head"><span>PHI risk score</span><span style="color:{color};font-weight:600">{lbl} · {r:.2f}</span></div>'
-                f'<div class="risk-track"><div class="risk-fill" style="width:{round(r*100)}%;background:{color}"></div></div>',
-                unsafe_allow_html=True,
-            )
-        if run.get("spans"):
-            view = st.radio("Payload", ["raw · flagged", "redacted"], horizontal=True,
-                            key="payload_view", label_visibility="collapsed")
-            if view.startswith("red"):
-                body = run["redacted"]
-            else:
-                parts, last = [], 0
-                for m in run["spans"]:
-                    parts.append(prompt_now[last:m["start"]].replace("<", "&lt;"))
-                    cls = "hi" if m["conf"] >= 0.70 else "lo"
-                    parts.append(f'<span class="ph {cls}" title="{m["type"]} · {m["conf"]:.2f}">{m["text"].replace("<","&lt;")}</span>')
-                    last = m["end"]
-                parts.append(prompt_now[last:].replace("<", "&lt;"))
-                body = "".join(parts)
-            st.markdown(f'<div class="pay"><div class="pay-body">{body}</div></div>', unsafe_allow_html=True)
-        if run.get("response_text") and run["mode"] == "det":
-            with st.expander("Simulated tool output", expanded=False):
-                st.code(run["response_text"], language="json")
-        if run.get("response_text") and run["mode"] == "live":
-            with st.expander("Agent response", expanded=True):
-                st.markdown(run["response_text"])
+resp_slot = c_req.empty()
+pipe_slot = c_pipe.empty()
+aud_slot = c_aud.container()
 
-with c_pipe:
-    st.markdown("#### Policy pipeline")
-    run = st.session_state.last_run
-    if not run:
-        st.info("Six deterministic controls run before any tool executes. Run a request to watch them evaluate in order.", icon="🛡")
-    else:
-        chips = [f'<span class="bdg mono" style="background:var(--surface-2);color:var(--muted);border-color:var(--border)">{TOOL_NAMES.get(run["tool"], run["tool"])}</span>']
-        if run.get("vendor_id"):
-            chips.append(f'<span class="bdg mono" style="background:var(--surface-2);color:var(--muted);border-color:var(--border)">→ {run["vendor_id"]}</span>')
-        elif run.get("patient_id"):
-            chips.append(f'<span class="bdg mono" style="background:var(--surface-2);color:var(--muted);border-color:var(--border)">→ {run["patient_id"]}</span>')
-        st.markdown("".join(chips), unsafe_allow_html=True)
-        if run.get("overlay"):
-            st.markdown(f'<div class="adv">{run["overlay"]}</div>', unsafe_allow_html=True)
-        for cid, label, status, detail in run["steps"]:
-            st.markdown(
-                f"""<div class="pstep"><div class="pdot {status}">{GLYPH[status]}</div>
-                <div><div class="pname {status}">{label}</div><div class="pdet">{detail}</div></div></div>""",
-                unsafe_allow_html=True,
-            )
-        if run["outcome"] == "BLOCKED":
-            st.markdown(
-                f"""<div class="resp deny" style="margin-top:6px"><div class="rule">{run['rule']}</div><div class="why">{run['reason']}</div></div>""",
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(
-                """<div class="resp ok" style="margin-top:6px"><div class="rule">All checks passed</div>
-                <div class="why">Every control in the hierarchy passed — request proceeds to the tool layer.</div></div>""",
-                unsafe_allow_html=True,
-            )
+if st.session_state.pop("do_run", False):
+    run_current(pipe_slot, resp_slot)
 
-with c_aud:
-    st.markdown("#### Audit trail · §164.312(b)")
+run = st.session_state.last_run
+resp_slot.markdown(response_html(run), unsafe_allow_html=True)
+pipe_slot.markdown(pipeline_html(view_from_run(run)), unsafe_allow_html=True)
+
+with aud_slot:
     events = st.session_state.audit_events
     total = len(events)
     okn = sum(1 for e in events if e["outcome"] == "SUCCESS")
@@ -793,7 +891,7 @@ with c_aud:
     if total:
         for n, c in ((okn, "var(--pass)"), (warnn, "var(--warn)"), (denyn, "var(--block)")):
             if n:
-                seg += f'<span style="width:{n/total*100}%;background:{c}"></span>'
+                seg += f'<span style="width:{n / total * 100}%;background:{c}"></span>'
         st.markdown(f'<div class="dist">{seg}</div>', unsafe_allow_html=True)
     d1, d2, d3 = st.columns(3)
     d1.download_button("JSON", json.dumps([{k: v for k, v in e.items() if k != "_res"} for e in events], indent=2),
@@ -823,7 +921,6 @@ with c_aud:
                 st.markdown(f'<div class="ae-kv"><span class="ae-k">phi types</span><span class="ae-v">{", ".join(e["phi_types_detected"])} · risk {e["risk_score"]}</span></div>', unsafe_allow_html=True)
             res = e.get("_res")
             if res is not None and st.button("Replay trace", key=f"replay_{e['event_id']}"):
-                inf = {"tool": res.tool, "vendor_id": res.vendor_id, "patient_id": res.patient_id}
                 st.session_state.last_run = {
                     "mode": "det", "result": res,
                     "steps": [(c.control, c.label, c.status, c.detail) for c in res.steps],
@@ -834,6 +931,7 @@ with c_aud:
                               for m in res.phi.matches] if res.phi else [],
                     "redacted": res.phi.redacted_text if res.phi else None,
                     "risk": res.phi.risk_score if res.phi else 0.0,
+                    "overlay": None,
                 }
                 st.rerun()
     if total > 15:
@@ -898,6 +996,7 @@ with tab_matrix:
             st.session_state.purpose = c.purpose
             st.session_state.justification = c.justification
             st.session_state.prompt_text = f"[{c.case_id}] {c.tool_name} · inputs: {c.tool_inputs}"
+        st.session_state["do_run"] = True
         st.rerun()
 
 with tab_ref:
