@@ -2,7 +2,7 @@
 <html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <meta name="color-scheme" content="light dark" />
 <title>PHI Guardrails — Clinical Audit Console</title>
 <meta name="description" content="Deterministic HIPAA guardrail demo — RBAC, purpose-of-use, sensitivity tiers, BAA gating, PHI detection, audit logging. Parity with the Strands Agents SDK implementation." />
@@ -46,7 +46,7 @@
   --hl-hi:rgba(248,113,113,.22); --hl-lo:rgba(251,191,36,.20);
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-html{height:100%}
+html{height:100%;-webkit-tap-highlight-color:transparent}
 body{
   min-height:100dvh;font-family:var(--font-body);font-size:var(--text-base);color:var(--text);background:var(--bg);
   display:grid;grid-template-columns:284px 1fr;grid-template-rows:56px 1fr;
@@ -396,6 +396,8 @@ table.mx{width:100%;border-collapse:collapse;font-size:var(--text-xs)}
 .main-foot{display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap;color:var(--faint);font-size:10.5px;padding-top:var(--s2);border-top:1px solid var(--divider)}
 .main-foot .sep{color:var(--border-strong)}
 
+.hamburger{display:none}
+.backdrop{display:none}
 @keyframes fadeUp{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .pstage{display:flex;align-items:flex-start;gap:10px;padding:7px 0;animation:fadeUp .2s ease}
 .pstage .sdot{width:24px;height:24px;border-radius:50%;border:1.5px dashed var(--border-strong);display:flex;align-items:center;justify-content:center;color:var(--faint);flex-shrink:0;background:var(--surface-2)}
@@ -430,12 +432,88 @@ table.mx{width:100%;border-collapse:collapse;font-size:var(--text-xs)}
   #main::before{inset:0}
   .workspace{grid-template-columns:1fr}
 }
+@media (max-width:1280px){
+  body{grid-template-columns:242px 1fr}
+  #main::before{inset:56px 0 0 242px}
+  .workspace{grid-template-columns:1fr 1fr}
+  #panel-audit{grid-column:1/-1}
+  .scen-grid{grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}
+}
+@media (max-width:920px){
+  body{grid-template-columns:1fr;grid-template-rows:52px 1fr}
+  .hamburger{display:flex}
+  .backdrop{display:block;position:fixed;inset:52px 0 0 0;background:rgba(6,12,8,.55);z-index:55;opacity:0;pointer-events:none;transition:opacity .22s ease}
+  body.nav-open .backdrop{opacity:1;pointer-events:auto}
+  #topbar{padding:0 var(--s3);height:52px;padding-left:calc(var(--s3) + env(safe-area-inset-left));padding-right:calc(var(--s3) + env(safe-area-inset-right))}
+  .status-chip{display:none}
+  #sidebar{
+    position:fixed;top:52px;bottom:0;left:0;width:min(86vw,322px);z-index:60;
+    transform:translateX(-104%);transition:transform .26s cubic-bezier(.4,0,.2,1);
+    border-right:1px solid var(--border);box-shadow:var(--sh-md);
+    padding-bottom:calc(var(--s4) + env(safe-area-inset-bottom));
+  }
+  body.nav-open #sidebar{transform:translateX(0)}
+  #main{grid-row:2;padding:var(--s3) calc(var(--s3) + env(safe-area-inset-right)) calc(var(--s6) + env(safe-area-inset-bottom)) calc(var(--s3) + env(safe-area-inset-left));gap:var(--s3);-webkit-overflow-scrolling:touch}
+  #main::before{inset:52px 0 0 0}
+  .workspace{grid-template-columns:1fr;gap:var(--s3)}
+  .panel-body{max-height:470px}
+  .btn-mini{min-height:40px;padding:8px 13px;font-size:10.5px}
+  .role-card{padding:12px}
+  .scen{min-height:44px}
+  .sec-head{flex-wrap:wrap;row-gap:6px}
+  .sec-head .line{display:none}
+  .sec-hint{display:none}
+  .scen-grid{grid-template-columns:1fr 1fr;gap:7px}
+  .scen{padding:12px 11px}
+  .scen-label{font-size:var(--text-xs)}
+  .btn{min-height:44px}
+  .tb-btn{width:38px;height:38px}
+  .panel-body{padding:var(--s3) 14px}
+  .panel-head{padding:11px 14px}
+  .pipe-log{height:96px;padding:8px 12px}
+  .tab-btn{padding:9px 11px;font-size:10px;white-space:nowrap;flex-shrink:0}
+  .tabbar{overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .tabbar::-webkit-scrollbar{display:none}
+  .matrix-wrap{max-height:none}
+  .mx{font-size:10px}
+  .mx thead th{font-size:8px;padding:7px 6px}
+  .mx tbody td{padding:6px}
+  .mx-cell{width:40px}
+  .dc-rule{white-space:normal;text-align:left}
+  .decision{padding:10px 12px}
+  .stamp{font-size:9px;letter-spacing:.1em;padding:3px 8px;top:8px;right:9px}
+  .resp,.response{padding:12px 13px}
+  .lens-area{min-height:96px;font-size:12px}
+  .lens-echo{font-size:12px}
+  .main-foot{font-size:9.5px;gap:var(--s2);padding-bottom:env(safe-area-inset-bottom)}
+  .ref-grid{grid-template-columns:1fr}
+}
+@media (max-width:560px){
+  .wordmark{font-size:var(--text-sm)}
+  .sub-chip{display:none}
+  .logo-mark{width:24px;height:24px}
+  .scen-id{display:none}
+  .count-chips{gap:4px}
+  .cchip{font-size:8.5px;padding:2px 6px}
+  .session-badges{gap:5px}
+  .sbadge{font-size:10px;padding:3px 8px}
+  .audit-metrics{gap:6px}
+  .am{padding:8px}
+  .am-val{font-size:var(--text-md)}
+  .btn-row{gap:6px}
+  .role-caps{gap:3px}
+  .cap{font-size:8.5px;padding:1.5px 6px}
+  .pipe-log:empty::before{font-size:8.5px}
+  .payload-body{max-height:110px}
+  .livebox{max-height:150px}
+}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body>
 
 <header id="topbar">
+  <button class="tb-btn hamburger" id="btn-nav" aria-label="Toggle navigation panel"></button>
   <svg class="logo-mark" viewBox="0 0 32 32" fill="none" aria-hidden="true">
     <path d="M16 2.5 28 9.25v13.5L16 29.5 4 22.75V9.25L16 2.5Z" fill="currentColor" fill-opacity=".1" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
     <path d="M8.5 16.5h4l1.8-4.6 3.4 8.2 1.8-3.6h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
@@ -448,6 +526,8 @@ table.mx{width:100%;border-collapse:collapse;font-size:var(--text-xs)}
   <button class="tb-btn" id="btn-theme" title="Toggle light/dark" aria-label="Toggle theme"></button>
   <a class="tb-btn" href="https://github.com/itsnmills/Strands-PHI-Guardrails-Demo" target="_blank" rel="noopener" title="GitHub repository" aria-label="GitHub"></a>
 </header>
+
+<div class="backdrop" id="backdrop" aria-hidden="true"></div>
 
 <aside id="sidebar">
   <div class="side-section">
@@ -619,6 +699,7 @@ const ICONS = {
   check:'<path d="M20 6 9 17l-5-5"/>',
   alertTriangle:'<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/>',
   chevron:'<path d="m6 9 6 6 6-6"/>',
+  menu:'<line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="18" y2="18"/>',
   eye:'<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
   info:'<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
   replay:'<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><polygon points="10 9 15 12 10 15 10 9"/>'
@@ -956,6 +1037,7 @@ function buildRoles(){
 }
 function selectRole(rid){
   state.role=rid;buildRoles();setBadges();
+  document.body.classList.remove('nav-open');
 }
 function buildPurposes(){
   const sel=$('purpose-select');sel.innerHTML='';
@@ -1007,6 +1089,7 @@ function applyContext(s){
 }
 async function loadScenario(s){
   if(state.running)return;
+  document.body.classList.remove('nav-open');
   const btn=document.querySelector(`.scen[data-id="${s.id}"]`);
   if(btn){btn.classList.add('dispatching');setTimeout(()=>btn.classList.remove('dispatching'),600)}
   applyContext(s);
@@ -1504,6 +1587,9 @@ function init(){
     setTheme(document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark');
   });
   initIcons();
+  $('btn-nav').innerHTML=ic('menu',17);
+  $('btn-nav').addEventListener('click',()=>document.body.classList.toggle('nav-open'));
+  $('backdrop').addEventListener('click',()=>document.body.classList.remove('nav-open'));
   try{state.justification=''}catch(e){}
   buildRoles();buildPurposes();updatePOU();setBadges();buildRefs();buildScenarios();
   buildMatrix();buildRef();loadAudit();renderAudit();updateLens();

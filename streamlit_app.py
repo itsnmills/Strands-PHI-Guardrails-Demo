@@ -92,6 +92,44 @@ code, pre, [data-testid="stCodeBlock"]{font-family:'IBM Plex Mono',ui-monospace,
 hr{border-color:var(--divider)}
 caption,.stCaption,[data-testid="stCaptionContainer"]{color:var(--faint)}
 .block-container{padding-top:1.4rem;max-width:1500px}
+@media (max-width:740px){
+  .block-container{padding:.9rem .8rem 3rem}
+  .stMarkdown h1{font-size:1.15rem !important}
+  .stMarkdown h3{font-size:.95rem !important}
+  .stButton>button{white-space:normal;text-align:left;min-height:44px;font-size:.83rem;line-height:1.35}
+  .stButton>button p{white-space:normal !important}
+  .stDownloadButton>button{min-height:44px}
+  .stTabs [data-baseweb="tab"]{padding:8px 10px;font-size:9.5px;white-space:nowrap}
+  .stTabs [data-baseweb="tab-list"]{overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar{display:none}
+  [data-testid="stMetric"]{padding:8px 10px}
+  [data-testid="stMetricValue"]{font-size:1.05rem}
+  [data-testid="stExpander"] summary{font-size:.82rem}
+  [data-testid="stTextArea"] textarea{font-size:11.5px}
+  .resp{padding:12px 13px}
+  .stamp{font-size:9px;letter-spacing:.1em;padding:3px 8px;top:8px;right:9px}
+  .resp .rule{font-size:12.5px}
+  .resp .why{font-size:11px}
+  .adv{font-size:10.5px}
+  .bdg{font-size:10px;padding:2.5px 8px}
+  .pdot{width:21px;height:21px;font-size:9.5px}
+  .pname{font-size:11.5px}
+  .pdet{font-size:10px}
+  .pline .ldot{width:20px;height:20px;font-size:9px}
+  .lname{font-size:11px}
+  .ldetail{font-size:9.5px}
+  .livebox{max-height:150px;font-size:10px}
+  .pay-body{max-height:120px;font-size:10px}
+  .ae-k{width:76px}
+  .ae-kv{font-size:9.5px}
+  .stagechip{font-size:9px;padding:3px 9px}
+}
+@media (max-width:740px){
+  .console-title{font-size:15px !important}
+  .mx{font-size:10px}
+  .mx th{font-size:8px;padding:6px}
+  .mx td{padding:5px 6px}
+}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -563,6 +601,14 @@ CHIP_CSS = """
 .ae-v.deny{color:var(--block)}
 .dist{height:6px;border-radius:99px;overflow:hidden;display:flex;background:#ecf1ea;border:1px solid var(--border)}
 .dist>span{height:100%}
+.mx{width:100%;min-width:640px;border-collapse:collapse;font-size:11px;background:var(--surface)}
+.mx th{background:var(--surface-2);font-family:'IBM Plex Mono',monospace;font-size:9px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);padding:8px 9px;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap}
+.mx td{padding:7px 9px;border-bottom:1px solid var(--divider);vertical-align:middle}
+.gl{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:6px;font-size:11px;font-weight:700;border:1px solid}
+.gl.pass{color:var(--pass);background:var(--pass-bg);border-color:var(--pass-bd)}
+.gl.warn{color:var(--warn);background:var(--warn-bg);border-color:var(--warn-bd)}
+.gl.block{color:var(--block);background:var(--block-bg);border-color:var(--block-bd)}
+.gl.skip{color:var(--faint);border-color:var(--divider)}
 </style>
 """
 st.markdown(CHIP_CSS, unsafe_allow_html=True)
@@ -783,7 +829,7 @@ with st.sidebar:
 st.markdown(
     f"""<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px">
     {LOGO_SVG}
-    <span style="font-family:'Space Grotesk';font-weight:700;font-size:22px;color:var(--ink)">PHI Guardrails — Clinical Audit Console</span>
+    <span class="console-title" style="font-family:'Space Grotesk';font-weight:700;font-size:22px;color:var(--ink)">PHI Guardrails — Clinical Audit Console</span>
     <span style="flex:1"></span>
     <span class="bdg ok" style="margin:0">{"live agent" if st.session_state.mode == "live" else "deterministic engine"}</span>
     <span class="bdg mono" style="margin:0">synthetic data only</span></div>""",
@@ -972,7 +1018,7 @@ with tab_matrix:
                 f"<td><span style='font-family:IBM Plex Mono;font-size:10px;font-weight:700;color:{vc}'>{verdict}</span></td></tr>"
             )
         st.markdown(
-            "<div style='max-height:520px;overflow:auto;border:1px solid var(--border);border-radius:12px'>"
+            "<div style='max-height:520px;overflow:auto;border:1px solid var(--border);border-radius:12px;-webkit-overflow-scrolling:touch'>"
             f"<table class='mx'><thead><tr><th>Case</th><th>Context</th>{head}<th>Expected</th><th>Actual</th><th>Verdict</th></tr></thead><tbody>{''.join(trs)}</tbody></table></div>",
             unsafe_allow_html=True,
         )
