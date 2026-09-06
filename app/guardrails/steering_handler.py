@@ -131,16 +131,6 @@ class HIPAASteeringHandler(SteeringHandler):
         # ── 1. Role authorization ──────────────────────────────
         policy = get_policy(self.role)
 
-        # Protect researcher role from direct record queries
-        if tool_name == "query_patient_record" and not policy.can_query_records:
-            return self._block(
-                "RBAC: Record Access Denied",
-                f"Role '{self.role}' cannot query raw patient records. "
-                "Use get_deidentified_summary() for research access.",
-                tool_name, inputs_safe,
-                patient_id=tool_input.get("patient_id"),
-            )
-
         # IT admin / auditor cannot access clinical tools
         if self.role in ("it_admin", "external_auditor") and tool_name in (
             "query_patient_record", "send_data_to_vendor", "log_clinical_note", "get_deidentified_summary"
@@ -150,6 +140,16 @@ class HIPAASteeringHandler(SteeringHandler):
                 f"Role '{self.role}' does not have access to clinical tools. "
                 "IT and auditor roles are restricted to system/audit functions.",
                 tool_name, inputs_safe,
+            )
+
+        # Protect researcher role from direct record queries
+        if tool_name == "query_patient_record" and not policy.can_query_records:
+            return self._block(
+                "RBAC: Record Access Denied",
+                f"Role '{self.role}' cannot query raw patient records. "
+                "Use get_deidentified_summary() for research access.",
+                tool_name, inputs_safe,
+                patient_id=tool_input.get("patient_id"),
             )
 
         # Billing staff cannot log clinical notes
