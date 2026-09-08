@@ -64,9 +64,11 @@ Every decision — allow, block, warn, break-glass grant — is sealed into an *
 }
 ```
 
+The chain also powers an **accounting of disclosures report (45 CFR §164.528)** (`app/compliance/disclosures.py`): external vendor sends plus break-glass grants rendered as the evidence a privacy office needs, with excluded (non-reportable) events counted and chain integrity stated on the report itself. Available as a one-click panel + CSV in the Streamlit console.
+
 ## Evaluation
 
-**131 automated tests, all running without an LLM or API key.**
+**139 automated tests, all running without an LLM or API key.**
 
 **Policy matrix — 16/16.** Regression cases with expected outcome + expected rule, run against the deterministic engine (`tests/test_evals.py`).
 
@@ -76,11 +78,26 @@ Every decision — allow, block, warn, break-glass grant — is sealed into an *
 |---|---|---|
 | **Policy bypass** (vendor impersonation, case/trailing-space/subdomain tricks, purpose laundering, justification stuffing, tier escalation, raw SSN/contact/address exfiltration) | 19 | **0/19 succeeded** — every attempt blocked with the intended rule |
 | **Prompt injection** (instruction override, fake system messages, DAN personas, authority forgery, emotional manipulation) | 12 | 5 blocked (the underlying call violated policy); 7 produced no change — hostile prompt + clean call = allowed, proving enforcement never reads the prompt |
-| **Detection gaps** (base64/hex-encoded SSNs, separator variants, leetspeak, spelled-out DOB/address) | 11 | Documented honestly as regex gaps — the E015-class problem regex-only detection can't solve; production fix is an NER layer (Comprehend Medical / Presidio) |
+| **Detection gaps** (base64/hex-encoded SSNs, separator variants, leetspeak, spelled-out DOB/address) | 10 | Documented honestly as regex gaps — the E015-class problem regex-only detection can't solve; production fix is an NER layer (Comprehend Medical / Presidio) |
+| **Closed gaps** (label-reordered DOB, normalized platform casing) | 2* | Former gaps the red-team pass surfaced and the engine now catches — kept as regression tests (`CLOSED_GAP`); if one ever passes again, the suite fails |
+
+*RT-042 via a pattern fix; RT-013's rule-mismatch finding (casing escaped one blocklist but landed in another) via normalized blocked-platform matching. The fix loop is the point: red team finds → engine hardens → regression retained.
 
 **Property-based invariants — 12 properties × 200 generated examples each** (`tests/test_properties.py`, Hypothesis): determinism, no raw-PHI egress, blocked-platforms-never-allow, unregistered-vendor-never-allows, unauthorized-purpose-always-blocks, trace integrity (≤1 block, everything after it skipped), and friends. These hold for *arbitrary* inputs, not just curated cases.
 
-**Session control tests** (`tests/test_session_controls.py`, `tests/test_audit_chain.py`): velocity warn→block escalation, window expiry, break-glass scoping/expiry/reason requirements, and hash-chain tamper detection (content edits, re-sealing attempts, deletions).
+**Session control tests** (`tests/test_session_controls.py`, `tests/test_audit_chain.py`, `tests/test_disclosures.py`): velocity warn→block escalation, window expiry, break-glass scoping/expiry/reason requirements, hash-chain tamper detection (content edits, re-sealing attempts, deletions), and §164.528 report invariants.
+
+**Performance** (`benchmarks/bench_guardrails.py`, Apple Silicon, no LLM/network):
+
+| Measurement | p50 | p99 |
+|---|---|---|
+| Six-control engine evaluation | 2.9 µs | 18.4 µs |
+| Engine + velocity monitor + break-glass state | 4.5 µs | 23.8 µs |
+| PHI scan (16 pattern families) | 6–15 µs | ≤ 20 µs |
+| Chained audit event seal (HMAC) | 10.3 µs | 14.5 µs |
+| **Live-agent pre-tool round-trip** (steering handler, incl. asyncio) | **32.8 µs** | **65.3 µs** |
+
+Enforcement adds microseconds before a tool call — the guardrails are effectively free next to any model round-trip. (Full-chain verification is linear: ~33 ms for a 5,000-event chain.)
 
 ## Running it
 

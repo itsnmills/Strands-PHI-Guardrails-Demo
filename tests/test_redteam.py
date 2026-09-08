@@ -112,6 +112,28 @@ def test_detection_gaps_are_documented():
         )
 
 
+# ── Closed gaps must stay closed ────────────────────────────────
+
+def test_closed_gaps_stay_closed():
+    """
+    CLOSED_GAP cases are former detection gaps that a hardening fix now
+    catches. They are kept as regression tests: if one ever evaluates
+    ALLOWED again, the fix regressed.
+    """
+    closed = [c for c in REDTEAM_CASES if c.attack_class == "CLOSED_GAP"]
+    assert closed, "Suite should retain closed-gap regressions"
+    for case in closed:
+        result = run_case(case)
+        assert result.outcome == "BLOCKED", (
+            f"\n[{case.case_id}] CLOSED GAP REGRESSED — a fixed detection gap "
+            f"passes again (got {result.outcome} / {result.rule})."
+        )
+        assert case.rationale.strip(), f"[{case.case_id}] Closed gap has no rationale"
+        assert "originally" in case.rationale.lower(), (
+            f"[{case.case_id}] Closed-gap rationale must record what the original gap was"
+        )
+
+
 # ── Injection invariants ────────────────────────────────────────
 
 def test_injection_flavors_present():
@@ -160,7 +182,7 @@ if __name__ == "__main__":
     print("\n── Red-team summary by attack class ─────────────────")
     print(f"{'ATTACK_CLASS':<18}{'cases':>7}{'blocked':>9}{'breached':>10}")
     bypass_total = bypass_breached = 0
-    for cls in ("POLICY_BYPASS", "PROMPT_INJECTION", "DETECTION_GAP"):
+    for cls in ("POLICY_BYPASS", "PROMPT_INJECTION", "DETECTION_GAP", "CLOSED_GAP"):
         s = stats.get(cls, {"total": 0, "blocked": 0, "breached": 0})
         print(f"{cls:<18}{s['total']:>7}{s['blocked']:>9}{s['breached']:>10}")
         if cls == "POLICY_BYPASS":

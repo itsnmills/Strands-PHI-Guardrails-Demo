@@ -51,7 +51,7 @@ PHI_PATTERNS: list[tuple[str, re.Pattern, float]] = [
     # (phi_type, pattern, confidence)
     ("ssn",            re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), 0.97),
     ("mrn",            re.compile(r"\bMRN[:\s]*\d{5,}\b", re.IGNORECASE), 0.95),
-    ("dob_labeled",    re.compile(r"\b(DOB|Date of Birth|born)[:\s]*\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b", re.IGNORECASE), 0.95),
+    ("dob_labeled",    re.compile(r"\b(DOB|birth\s+date|date\s+of\s+birth|born)[:\s]*\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b", re.IGNORECASE), 0.95),
     ("email",          re.compile(r"\b[\w.\-+]+@[\w.\-]+\.[a-z]{2,}\b", re.IGNORECASE), 0.90),
     ("phone_us",       re.compile(r"\b(\+1[\s.-]?)?\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}\b"), 0.87),
     ("health_plan",    re.compile(r"\b(health plan|member id|subscriber id|group number)[:\s]*[\w\-]{5,}\b", re.IGNORECASE), 0.85),

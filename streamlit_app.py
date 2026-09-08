@@ -739,6 +739,7 @@ def init_state():
         "session_monitor": SessionMonitor(),
         "break_glass": BreakGlassRegistry(),
         "chain_report": None,
+        "disclosure_report": None,
         "audit_events": [],
         "last_run": None,
         "run_count": 0,
@@ -995,13 +996,18 @@ with aud_slot:
             st.session_state.session_monitor = SessionMonitor()
             st.session_state.break_glass = BreakGlassRegistry()
             st.session_state.chain_report = None
+            st.session_state.disclosure_report = None
             st.rerun()
-    v1, v2 = st.columns(2)
+    v1, v2, v3 = st.columns(3)
     if v1.button("Verify audit chain", use_container_width=True, disabled=not events,
                  help="Walks the HMAC-SHA256 hash chain — detects any modification, deletion, or reordering of history."):
         st.session_state.chain_report = st.session_state.audit_logger.verify_chain()
+    if v2.button("Disclosure report", use_container_width=True, disabled=not events,
+                 help="Accounting of disclosures (45 CFR §164.528): external sends + break-glass grants, rendered from the audit chain."):
+        from app.compliance.disclosures import disclosure_report
+        st.session_state.disclosure_report = disclosure_report(st.session_state.audit_logger)
     bg_pending = len(st.session_state.break_glass.pending_review())
-    v2.metric("Break-glass review queue", bg_pending)
+    v3.metric("Break-glass review queue", bg_pending)
     if st.session_state.chain_report:
         cr = st.session_state.chain_report
         if cr["intact"]:
@@ -1010,6 +1016,14 @@ with aud_slot:
         else:
             st.markdown(f'<span class="bdg deny">TAMPER DETECTED at {cr["broken_at"]} — log integrity compromised</span>',
                         unsafe_allow_html=True)
+    if st.session_state.get("disclosure_report"):
+        dr = st.session_state.disclosure_report
+        with st.expander(f"Accounting of Disclosures · §164.528 — {len(dr.rows)} reportable event(s)", expanded=True):
+            st.caption(f"{dr.excluded_events} non-reportable events reviewed · audit chain "
+                       f"{'intact' if dr.chain_intact else 'COMPROMISED'}")
+            st.code(dr.to_text(), language=None)
+            st.download_button("Download CSV", dr.to_csv(), file_name="disclosure-accounting-164-528.csv",
+                               mime="text/csv", use_container_width=True)
     for e in events[:15]:
         cls = {"BLOCKED": "🚫", "WARNING": "⚠️", "SUCCESS": "✅"}.get(e["outcome"], "•")
         chain_bit = f' · <span style="font-family:IBM Plex Mono;font-size:9px;color:var(--faint)">⛓ {e["entry_hash"][:8]}</span>' if e.get("entry_hash") else ""

@@ -235,11 +235,15 @@ class HIPAASteeringHandler(SteeringHandler):
         if tool_name == "send_data_to_vendor":
             vendor_id = tool_input.get("vendor_id", "")
 
+            # Blocked platforms matched on a normalized probe (trim + lowercase) —
+            # casing/format games must land on the blocklist, not the registry fallback.
+            vendor_probe = vendor_id.strip().lower() if isinstance(vendor_id, str) else vendor_id
+
             # Check explicitly blocked consumer platforms
-            if vendor_id in BLOCKED_PLATFORMS:
+            if isinstance(vendor_probe, str) and vendor_probe in BLOCKED_PLATFORMS:
                 return self._block(
                     "BAA: Blocked Consumer Platform",
-                    f"'{vendor_id}' ({BLOCKED_PLATFORMS[vendor_id]}) is not BAA-eligible. "
+                    f"'{vendor_id}' ({BLOCKED_PLATFORMS[vendor_probe]}) is not BAA-eligible. "
                     "PHI may not be transmitted to consumer platforms. "
                     "Use a BAA-covered alternative.",
                     tool_name, inputs_safe,

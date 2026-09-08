@@ -37,7 +37,7 @@ CLINICAL_TOOLS = ("query_patient_record", "send_data_to_vendor", "log_clinical_n
 NON_CLINICAL_ROLES = ("it_admin", "external_auditor")
 
 _NARRATIVE_CUES = re.compile(
-    r"\b(born|date\s+of\s+birth|years[-\s]old|lives?\s+on|lives?\s+in|resides?\s+at|"
+    r"\b(born|dob\b|date\s+of\s+birth|birth\s+date|years[-\s]old|lives?\s+(?:on|in|at)|resides?\s+at|"
     r"street|avenue|boulevard|lane)\b",
     re.IGNORECASE,
 )
@@ -169,11 +169,15 @@ def evaluate(
 
     if tool_name == "send_data_to_vendor":
         trace["baa"] = ControlStep("baa", trace["baa"].label, "pass", "")
-        if vendor_id in BLOCKED_PLATFORMS:
+        # Blocked platforms are matched on a normalized probe (trim + lowercase) so
+        # case/format variants cannot slip past the blocklist; the BAA registry itself
+        # stays strict exact-match — malformed identifiers fail closed.
+        vendor_probe = vendor_id.strip().lower() if isinstance(vendor_id, str) else vendor_id
+        if isinstance(vendor_probe, str) and vendor_probe in BLOCKED_PLATFORMS:
             trace["baa"] = ControlStep("baa", trace["baa"].label, "block", f"'{vendor_id}' is a consumer platform — no BAA available")
             return finish(result, "block", "baa", trace["baa"].detail,
                           "BAA: Blocked Consumer Platform",
-                          f"'{vendor_id}' ({BLOCKED_PLATFORMS[vendor_id]}) is not BAA-eligible. PHI may not be transmitted to consumer platforms. Use a BAA-covered alternative.")
+                          f"'{vendor_id}' ({BLOCKED_PLATFORMS[vendor_probe]}) is not BAA-eligible. PHI may not be transmitted to consumer platforms. Use a BAA-covered alternative.")
         if not vendor_id or vendor_id not in VENDOR_REGISTRY:
             trace["baa"] = ControlStep("baa", trace["baa"].label, "block", f"'{vendor_id or 'unknown destination'}' not in BAA registry")
             return finish(result, "block", "baa", trace["baa"].detail,
