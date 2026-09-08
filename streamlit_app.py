@@ -395,6 +395,7 @@ def run_live(prompt: str, pipe_slot, resp_slot):
             audit_logger=logger,
             session_monitor=st.session_state.session_monitor,
             break_glass=st.session_state.break_glass,
+            model=st.session_state.get("model_choice"),
         )
     except Exception as e:
         _live_fallback(prompt, pipe_slot, None, f"Agent construction failed ({type(e).__name__}) — deterministic policy echo shown instead.")
@@ -767,7 +768,6 @@ with st.sidebar:
     st.divider()
 
     has_key = bool(os.environ.get("OPENCODE_API_KEY") or os.environ.get("OPENROUTER_API_KEY"))
-    model = os.environ.get("PHI_DEMO_MODEL", "glm-5.3-flash")
     mode = st.radio(
         "Engine",
         ["Deterministic policy engine", "Live agent (LLM)"],
@@ -780,7 +780,13 @@ with st.sidebar:
     if not has_key:
         st.caption("No API key found — live mode unavailable. Add OPENCODE_API_KEY (or OPENROUTER_API_KEY) to `.env`.")
     else:
-        st.caption(f"Model: `{model}` via `{os.environ.get('PHI_DEMO_BASE_URL', 'https://opencode.ai/zen/go/v1')}`")
+        model_choice = st.selectbox(
+            "Model",
+            ["glm-5.3-flash", "deepseek-v4-flash"],
+            help="Both served by OpenCode Go. DeepSeek V4 Flash has cheaper off-peak pricing (01:00–04:00, 06:00–10:00 UTC weekdays).",
+        )
+        st.session_state.model_choice = model_choice
+        st.caption(f"via `{os.environ.get('PHI_DEMO_BASE_URL', 'https://opencode.ai/zen/go/v1')}`")
     st.divider()
 
     st.markdown("**Session Context**")
@@ -877,7 +883,7 @@ st.markdown(
     {LOGO_SVG}
     <span class="console-title" style="font-family:'Space Grotesk';font-weight:700;font-size:22px;color:var(--ink)">PHI Guardrails — Clinical Audit Console</span>
     <span style="flex:1"></span>
-    <span class="bdg ok" style="margin:0">{"live agent" if st.session_state.mode == "live" else "deterministic engine"}</span>
+    <span class="bdg ok" style="margin:0">{("live agent · " + st.session_state.get("model_choice", "glm-5.3-flash")) if st.session_state.mode == "live" else "deterministic engine"}</span>
     <span class="bdg mono" style="margin:0">synthetic data only</span></div>""",
     unsafe_allow_html=True,
 )

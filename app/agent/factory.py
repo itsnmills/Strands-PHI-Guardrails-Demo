@@ -70,6 +70,7 @@ def create_agent(
     audit_logger: AuditLogger,
     session_monitor=None,
     break_glass=None,
+    model: str | None = None,
 ) -> tuple[Agent, HIPAASteeringHandler]:
     """
     Create a role-scoped HIPAA agent.
@@ -77,7 +78,8 @@ def create_agent(
     Returns (agent, steering_handler) so the UI can read guardrail events.
     `session_monitor` and `break_glass` are optional shared session objects;
     when provided, the steering layer gains behavioral minimum-necessary
-    enforcement and the break-glass emergency path.
+    enforcement and the break-glass emergency path. `model` overrides the
+    PHI_DEMO_MODEL environment default (both live on OpenCode Go).
     """
     # Register audit logger with tools
     set_audit_logger(audit_logger)
@@ -91,7 +93,7 @@ def create_agent(
     }
 
     model = LiteLLMModel(
-        model_id=f"openai/{os.environ.get('PHI_DEMO_MODEL', 'glm-5.3-flash')}",
+        model_id=f"openai/{model or os.environ.get('PHI_DEMO_MODEL', 'glm-5.3-flash')}",
         params={
             "api_key": os.environ.get("OPENCODE_API_KEY", "")
             or os.environ.get("OPENROUTER_API_KEY", ""),
