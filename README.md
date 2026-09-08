@@ -1,10 +1,109 @@
 # Strands PHI Guardrails Demo
 
 [![CI](https://github.com/itsnmills/Strands-PHI-Guardrails-Demo/actions/workflows/ci.yml/badge.svg)](https://github.com/itsnmills/Strands-PHI-Guardrails-Demo/actions/workflows/ci.yml)
+[![pages](https://github.com/itsnmills/Strands-PHI-Guardrails-Demo/actions/workflows/pages.yml/badge.svg)](https://github.com/itsnmills/Strands-PHI-Guardrails-Demo/actions/workflows/pages.yml)
 
-![PHI Guardrails — Clinical Audit Console, light theme, showing a blocked restricted-record access attempt with the six-control policy pipeline](screenshot-ui-v3.jpg)
+**Live demo:** [itsnmills.github.io/Strands-PHI-Guardrails-Demo](https://itsnmills.github.io/Strands-PHI-Guardrails-Demo/) — no install, no data leaves your browser.
 
-Strands PHI Guardrails Demo is a healthcare AI safety portfolio project by Noah Mills. It shows how an assistant workflow can enforce deterministic controls before a tool call reaches records, vendors, LLMs, email, or audit-adjacent actions. The demo combines role-based access control, purpose-of-use checks, PHI-pattern detection, sensitivity tiers, BAA-status gating, and structured audit logging so the safety story is visible in code instead of buried in a prompt.
+A healthcare AI safety portfolio project by Noah Mills: **policy-as-code guardrails that run before an AI agent's tool call executes** — not a prompt asking the model to behave.
+
+![Decision theater: a nurse requesting a restricted psychiatric record is blocked mid-pipeline with the ACCESS DENIED stamp and a tamper-evident audit event](docs/demo.gif)
+
+## Why this exists
+
+"Please don't leak PHI" is not a control. LLM safety that lives in the system prompt fails exactly when it matters — under prompt injection, role confusion, or a model that decides to be helpful. The thesis here: **sensitive healthcare workflows need deterministic gates between the model and the data**, and those gates should be visible, testable code — not a buried instruction.
+
+A nurse attempting to open a restricted psychiatric record is blocked mid-pipeline. A physician with a treatment purpose proceeds. A raw SSN headed to an AI vendor is caught and logged. Prompt injection that says "ignore your instructions" changes nothing, because the policy decision never reads the prompt — it reads the session context and the structured tool call.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    U[User request] --> A[Strands Agent<br/>role-scoped, tool-forward prompt]
+    A -->|tool call requested| S[SteeringHandler<br/>pre-tool enforcement]
+    S --> C{Control hierarchy<br/>6 deterministic checks}
+    C -->|allowed| T[Clinical tools<br/>records · vendors · notes]
+    C -->|blocked| G[Guide back to model<br/>reason verbatim]
+    S --> AL[(Hash-chained<br/>audit log)]
+    SM[Session velocity monitor] --> S
+    BG[Break-glass registry] --> S
+```
+
+The same six-control hierarchy exists twice, deliberately:
+
+- **`app/guardrails/policy_engine.py`** — deterministic, dependency-free. Runs the 16-case matrix, the red-team suite, the property tests, and the fallback mode. No LLM needed, so evaluation is free and CI-safe.
+- **`app/guardrails/steering_handler.py`** — the same checks as a Strands `SteeringHandler`, intercepting every tool call on the live-agent path before execution.
+
+## The control hierarchy
+
+| # | Control | Example block | Source |
+|---|---------|---------------|--------|
+| 1 | **RBAC** | IT admin has zero PHI access; billing cannot write clinical notes; nurses cannot transmit to vendors | `app/policies/rbac.py` |
+| 2 | **Purpose-of-use** | Researcher can't claim TREATMENT; RESEARCH requires a written IRB justification | `app/policies/purpose_of_use.py` |
+| 3 | **Sensitivity tiers** | STANDARD / SENSITIVE (substance use) / RESTRICTED (psychiatric) — per-role scope, 42 CFR Part 2 aware | `app/data/patients.py` |
+| 4 | **BAA registry** | Exact-match vendor registry; typo-squats, case variants, and subdomains fail closed; consumer platforms blocked outright | `app/data/vendors.py` |
+| 5 | **PHI content scan** | 16 pattern families with confidence weights; risk ≥ 0.60 blocks outbound payloads; narrative-cue advisories for regex blind spots | `app/guardrails/phi_detector.py` |
+| 6 | **Minimum necessary** | Single-request scope **plus session velocity** — 6 rapid record pulls by a nurse trip the behavioral budget | `app/guardrails/session_monitor.py` |
+
+First block wins; downstream checks are skipped and the trace shows exactly where and why.
+
+### Session-level controls (state, not just single requests)
+
+- **Session velocity monitor** — rolling 5-minute window per session: warn at budget, block at 2×. Catches chart-snooping and bulk-exfiltration patterns a single-request check can never see.
+- **Break-glass emergency access** — the controlled exception path: scoped to one patient + one role, requires a ≥20-char justification (the reason *is* the audit trail), expires in 15 minutes, every grant is a flagged `BREAK_GLASS` audit event queued for mandatory post-hoc review (§164.528 accounting of disclosures).
+
+### Tamper-evident audit logging
+
+Every decision — allow, block, warn, break-glass grant — is sealed into an **HMAC-SHA256 hash chain** (`app/guardrails/audit_logger.py`): each event carries its predecessor's hash plus an HMAC over its canonical contents. Modify, delete, or reorder history and `verify_chain()` reports the first broken link. Production notes: append-only WORM storage and a KMS-held key, but the chain design is the real thing.
+
+```json
+{
+  "event_id": "a1b2c3d4", "category": "POLICY_EVAL", "outcome": "BLOCKED",
+  "policy_rule_triggered": "Sensitivity Tier: Access Denied",
+  "prev_hash": "0f3e…", "entry_hash": "9a7b…"
+}
+```
+
+## Evaluation
+
+**131 automated tests, all running without an LLM or API key.**
+
+**Policy matrix — 16/16.** Regression cases with expected outcome + expected rule, run against the deterministic engine (`tests/test_evals.py`).
+
+**Prompt-injection red-team suite — 42 adversarial cases, 0% bypass** (`app/evals/redteam_cases.py`, `tests/test_redteam.py`):
+
+| Attack class | Cases | Result |
+|---|---|---|
+| **Policy bypass** (vendor impersonation, case/trailing-space/subdomain tricks, purpose laundering, justification stuffing, tier escalation, raw SSN/contact/address exfiltration) | 19 | **0/19 succeeded** — every attempt blocked with the intended rule |
+| **Prompt injection** (instruction override, fake system messages, DAN personas, authority forgery, emotional manipulation) | 12 | 5 blocked (the underlying call violated policy); 7 produced no change — hostile prompt + clean call = allowed, proving enforcement never reads the prompt |
+| **Detection gaps** (base64/hex-encoded SSNs, separator variants, leetspeak, spelled-out DOB/address) | 11 | Documented honestly as regex gaps — the E015-class problem regex-only detection can't solve; production fix is an NER layer (Comprehend Medical / Presidio) |
+
+**Property-based invariants — 12 properties × 200 generated examples each** (`tests/test_properties.py`, Hypothesis): determinism, no raw-PHI egress, blocked-platforms-never-allow, unregistered-vendor-never-allows, unauthorized-purpose-always-blocks, trace integrity (≤1 block, everything after it skipped), and friends. These hold for *arbitrary* inputs, not just curated cases.
+
+**Session control tests** (`tests/test_session_controls.py`, `tests/test_audit_chain.py`): velocity warn→block escalation, window expiry, break-glass scoping/expiry/reason requirements, and hash-chain tamper detection (content edits, re-sealing attempts, deletions).
+
+## Running it
+
+**Static console** (what's deployed above): open [`demo-ui.html`](demo-ui.html) or `python3 -m http.server 4173`. Client-side re-implementation of the same six-control engine with the policy matrix, PHI lens, redaction previews, exportable audit trail, and deep links (`demo-ui.html?theme=dark&run=B2` loads and runs a scenario directly). Responsive down to phone sizes.
+
+**Live agent console:**
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env        # set OPENCODE_API_KEY (or OPENROUTER_API_KEY)
+streamlit run streamlit_app.py
+```
+
+Talks to an OpenAI-compatible gateway (OpenCode Go, default base `https://opencode.ai/zen/go/v1`, default model `glm-5.3-flash`; override with `PHI_DEMO_MODEL` / `PHI_DEMO_BASE_URL`). Without a key it falls back to deterministic mode and every policy path still works. System prompts are deliberately tool-forward — **the model routes requests; the steering layer, not the prompt, decides.** The console streams dispatch → model output → tool request → steering decision → tool execution live, with a verify-chain button on the audit panel and a break-glass control in the sidebar.
+
+**Tests:** `python -m pytest -q tests`
+
+## Known limitations, stated plainly
+
+- **Regex-only PHI detection has recall gaps.** Eleven red-team cases document exactly which encodings slip past — that's a feature of the evaluation, not a bug in the thesis. The fix path (NER layer) is designed for but not wired.
+- The audit chain is session-scoped with an in-memory key. Real deployments need durable keys (KMS/HSM) and append-only storage.
+- Break-glass review queue is a demo of the *workflow*; there's no reviewer UI beyond the queue count and flagged events.
+- Not HIPAA certification, legal advice, or a production authorization layer. It is a concrete artifact for healthcare AI governance conversations: what should be checked, where the check belongs, what gets logged, and how enforceable workflow controls differ from prompt-only safety.
 
 ## How this was built, plainly
 
@@ -28,14 +127,10 @@ Release and branch notes:
 - Canonical branch: `main`
 - Branch cleanup plan: [`docs/BRANCH_NORMALIZATION_PLAN.md`](docs/BRANCH_NORMALIZATION_PLAN.md)
 
-## What it does
+## Roadmap
 
-The core idea is simple: sensitive healthcare workflows need policy gates that run before generation, not after. A nurse attempting to access a restricted psychiatric record is blocked; a physician with an allowed treatment purpose can proceed; raw SSNs or unsupported vendor sends are stopped and logged. The `guardrails/` module is intentionally small, local-first, and dependency-light so the pattern can be inspected, reused, or wrapped as an HTTP sidecar without turning the repo into a compliance claim.
-
-## Running the two demos
-
-**Static console (no dependencies):** open [`demo-ui.html`](demo-ui.html) in a browser, or serve it with `python3 -m http.server 4173`. It runs a client-side re-implementation of the same six-control policy engine and ships with a 16-case regression matrix, a live PHI lens, redaction previews, and exportable audit trails. Deep links work: `demo-ui.html?theme=dark&run=B2` loads and runs a scenario directly.
-
-**Live agent (Streamlit):** `pip install -r requirements.txt`, copy `.env.example` to `.env`, then `streamlit run streamlit_app.py`. The agent talks to an OpenAI-compatible gateway; set `OPENCODE_API_KEY` (OpenCode Go, default base `https://opencode.ai/zen/go/v1`, default model `glm-5.3-flash`) or `OPENROUTER_API_KEY`, and optionally override with `PHI_DEMO_MODEL` / `PHI_DEMO_BASE_URL`. Without a key it falls back to deterministic simulation mode, so the UI still demonstrates every policy path. System prompts are deliberately tool-forward — the model routes requests, and the steering layer, not the prompt, decides.
-
-This is not a HIPAA certification, legal opinion, or production authorization layer. It is a concrete demo for healthcare AI governance conversations: what should be checked, where the check belongs, what gets logged, and how a team can explain the difference between prompt-only safety and enforceable workflow controls.
+- [ ] NER-based PHI detection layer (Presidio / Comprehend Medical) behind a pluggable interface, with a precision/recall benchmark over a synthetic labeled corpus
+- [ ] Containerized policy sidecar (`/evaluate`, `/verify-audit`) with API keys + rate limits
+- [ ] Simulated SMART-on-FHIR scoped tokens (per-patient scopes, expiry) replacing the role dropdown
+- [ ] OpenTelemetry spans per guardrail decision, correlated with audit event IDs
+- [ ] STRIDE threat model doc mapped to the code

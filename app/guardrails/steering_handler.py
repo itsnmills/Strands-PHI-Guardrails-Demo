@@ -26,8 +26,10 @@ from strands.vended_plugins.steering import SteeringHandler, Guide, Proceed
 
 from app.guardrails.phi_detector import detect_phi, should_block
 from app.guardrails.audit_logger import AuditLogger
+from app.guardrails.session_monitor import SessionMonitor
 from app.policies.rbac import get_policy, can_access_record, ClinicalRole
 from app.policies.purpose_of_use import validate_purpose, PURPOSE_POLICIES
+from app.policies.break_glass import BreakGlassRegistry
 from app.data.vendors import VENDOR_REGISTRY, BLOCKED_PLATFORMS
 from app.data.patients import PATIENT_DB
 
@@ -51,6 +53,8 @@ class HIPAASteeringHandler(SteeringHandler):
         purpose: str,
         justification: str,
         audit_logger: AuditLogger,
+        session_monitor: SessionMonitor | None = None,
+        break_glass: BreakGlassRegistry | None = None,
     ):
         super().__init__()
         self.role = role
@@ -58,6 +62,8 @@ class HIPAASteeringHandler(SteeringHandler):
         self.purpose = purpose
         self.justification = justification
         self.audit = audit_logger
+        self.session_monitor = session_monitor
+        self.break_glass = break_glass
         self.guardrail_events: list[dict] = []   # for live UI display
 
     # ── Private helpers ──────────────────────────────────────────
@@ -177,25 +183,53 @@ class HIPAASteeringHandler(SteeringHandler):
                 patient = PATIENT_DB[patient_id]
                 accessible, access_reason = can_access_record(self.role, patient.sensitivity)
                 if not accessible:
-                    return self._block(
-                        "Sensitivity Tier: Access Denied",
-                        access_reason,
-                        tool_name, inputs_safe,
+                    grant = self.break_glass.active_grant(self.role, patient_id) if self.break_glass else None
+                    if grant is None:
+                        return self._block(
+                            "Sensitivity Tier: Access Denied",
+                            access_reason,
+                            tool_name, inputs_safe,
+                            patient_id=patient_id,
+                        )
+                    # Break-glass path: emergency override is a WARNING access, never a silent allow
+                    self.guardrail_events.append({
+                        "outcome": "WARNING",
+                        "rule": "Break-Glass: Emergency Override",
+                        "tool": tool_name,
+                        "reason": f"Emergency grant active for {patient_id} — {grant.minutes_remaining():.0f}m remaining; post-hoc review required",
+                        "role": self.role,
+                        "purpose": self.purpose,
+                    })
+                    self.audit.log(
+                        category="ACCESS",
+                        outcome="WARNING",
+                        actor_role=self.role,
+                        actor_id=self.actor_id,
+                        tool_name=tool_name,
+                        action_description=(
+                            f"BREAK-GLASS emergency access: {patient_id} (sensitivity: {patient.sensitivity}, "
+                            f"{grant.minutes_remaining():.0f}m remaining). Reason on file: {grant.reason}"
+                        ),
                         patient_id=patient_id,
+                        policy_rule_triggered="Break-Glass: Emergency Override",
+                        inputs_sanitized=inputs_safe,
+                        purpose_of_use=self.purpose,
+                        justification=grant.reason,
                     )
-                # Log the access event separately
-                self.audit.log(
-                    category="ACCESS",
-                    outcome="SUCCESS",
-                    actor_role=self.role,
-                    actor_id=self.actor_id,
-                    tool_name=tool_name,
-                    action_description=f"Patient record accessed: {patient_id} (sensitivity: {patient.sensitivity})",
-                    patient_id=patient_id,
-                    inputs_sanitized=inputs_safe,
-                    purpose_of_use=self.purpose,
-                    justification=self.justification,
-                )
+                else:
+                    # Log the access event separately
+                    self.audit.log(
+                        category="ACCESS",
+                        outcome="SUCCESS",
+                        actor_role=self.role,
+                        actor_id=self.actor_id,
+                        tool_name=tool_name,
+                        action_description=f"Patient record accessed: {patient_id} (sensitivity: {patient.sensitivity})",
+                        patient_id=patient_id,
+                        inputs_sanitized=inputs_safe,
+                        purpose_of_use=self.purpose,
+                        justification=self.justification,
+                    )
 
         # ── 4. Vendor / BAA checks ────────────────────────────
         if tool_name == "send_data_to_vendor":
@@ -225,6 +259,17 @@ class HIPAASteeringHandler(SteeringHandler):
 
             vendor = VENDOR_REGISTRY[vendor_id]
 
+            # Role capability: only roles with vendor-transmission authority may send at all
+            if not policy.can_send_to_vendors:
+                return self._block(
+                    "RBAC: Vendor Transmission Not Authorized",
+                    f"Role '{self.role}' cannot transmit data to external vendors. "
+                    "External disclosure requires a role with vendor-transmission authority "
+                    "(e.g. treating provider or revenue-cycle staff).",
+                    tool_name, inputs_safe,
+                    vendor_id=vendor_id,
+                )
+
             # Check if vendor BAA covers this sensitivity tier
             patient_id = tool_input.get("patient_id", "")
             if patient_id in PATIENT_DB:
@@ -235,6 +280,18 @@ class HIPAASteeringHandler(SteeringHandler):
                         f"Vendor '{vendor.display_name}' BAA does not cover {patient.sensitivity} data. "
                         f"This vendor is approved for: {vendor.allowed_sensitivity}. "
                         "De-identify the data or use an appropriate vendor.",
+                        tool_name, inputs_safe,
+                        vendor_id=vendor_id,
+                        patient_id=patient_id,
+                    )
+                # Role capability: sensitive-category data may not leave the perimeter at all
+                # for roles without special egress authority (45 CFR §164.528 accounting)
+                if patient.sensitivity in ("SENSITIVE", "RESTRICTED") and not policy.can_send_sensitive_externally:
+                    return self._block(
+                        "RBAC: Sensitive Data Egress Restricted",
+                        f"Role '{self.role}' may not transmit {patient.sensitivity}-tier data externally under any BAA. "
+                        "Sensitive-category disclosures require special authorization and a documented accounting "
+                        "(45 CFR §164.528).",
                         tool_name, inputs_safe,
                         vendor_id=vendor_id,
                         patient_id=patient_id,
@@ -284,5 +341,47 @@ class HIPAASteeringHandler(SteeringHandler):
                 )
                 # Inject redacted note back into tool_use so the tool sees clean text
                 tool_use["input"]["note"] = detection.redacted_text
+
+        # ── 6. Behavioral minimum-necessary: session velocity ──
+        # Mirrors policy_engine.evaluate(..., monitor=...) — warn at budget, block at 2×.
+        if self.session_monitor is not None:
+            if tool_name == "query_patient_record" and tool_input.get("patient_id"):
+                verdict, velocity_msg = self.session_monitor.check_query(self.role, tool_input.get("patient_id"))
+            elif tool_name == "send_data_to_vendor" and tool_input.get("vendor_id"):
+                verdict, velocity_msg = self.session_monitor.check_send(self.role, tool_input.get("vendor_id"))
+            else:
+                verdict, velocity_msg = "ok", ""
+            if verdict == "block":
+                return self._block(
+                    "Minimum Necessary: Session Velocity Exceeded",
+                    f"{velocity_msg}. Session usage pattern exceeds the minimum-necessary budget for this role — "
+                    "the request pattern resembles record enumeration or bulk exfiltration.",
+                    tool_name, inputs_safe,
+                    patient_id=tool_input.get("patient_id"),
+                    vendor_id=tool_input.get("vendor_id"),
+                )
+            if verdict == "warn":
+                self.guardrail_events.append({
+                    "outcome": "WARNING",
+                    "rule": "Minimum Necessary: Velocity Anomaly",
+                    "tool": tool_name,
+                    "reason": velocity_msg,
+                    "role": self.role,
+                    "purpose": self.purpose,
+                })
+                self.audit.log(
+                    category="POLICY_EVAL",
+                    outcome="WARNING",
+                    actor_role=self.role,
+                    actor_id=self.actor_id,
+                    tool_name=tool_name,
+                    action_description=f"Minimum-necessary anomaly recorded: {velocity_msg}",
+                    policy_rule_triggered="Minimum Necessary: Velocity Anomaly",
+                    patient_id=tool_input.get("patient_id"),
+                    vendor_id=tool_input.get("vendor_id"),
+                    inputs_sanitized=inputs_safe,
+                    purpose_of_use=self.purpose,
+                    justification=self.justification,
+                )
 
         return self._allow(tool_name, inputs_safe)

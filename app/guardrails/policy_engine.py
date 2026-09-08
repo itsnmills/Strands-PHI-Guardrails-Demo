@@ -17,8 +17,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.guardrails.phi_detector import detect_phi, should_block
+from app.guardrails.session_monitor import SessionMonitor
 from app.policies.rbac import get_policy
 from app.policies.purpose_of_use import PURPOSE_POLICIES
+from app.policies.break_glass import BreakGlassRegistry
 from app.data.vendors import VENDOR_REGISTRY, BLOCKED_PLATFORMS
 from app.data.patients import PATIENT_DB
 
@@ -74,6 +76,9 @@ def evaluate(
     justification: str,
     tool_name: str,
     tool_inputs: dict[str, Any],
+    *,
+    monitor: "SessionMonitor | None" = None,
+    break_glass: "BreakGlassRegistry | None" = None,
 ) -> PolicyResult:
     policy = get_policy(role)  # type: ignore[arg-type]
     pou_policy = PURPOSE_POLICIES[purpose]
@@ -133,19 +138,34 @@ def evaluate(
 
     if tool_name == "query_patient_record" and patient:
         trace["sens"] = ControlStep("sens", trace["sens"].label, "pass", "")
-        if patient.sensitivity == "RESTRICTED" and not policy.can_view_restricted:
-            trace["sens"] = ControlStep("sens", trace["sens"].label, "block", f"{patient_id} is RESTRICTED — outside role '{role}' scope")
+
+        def _tier_block(tier: str, scope_note: str) -> PolicyResult:
+            trace["sens"] = ControlStep("sens", trace["sens"].label, "block",
+                                        f"{patient_id} is {tier} — outside role '{role}' scope")
             return finish(result, "block", "sens", trace["sens"].detail,
-                          "Sensitivity Tier: Access Denied",
-                          f"Role '{role}' is not authorized to access RESTRICTED records (psychiatric, genetic). "
-                          "Requires separate patient authorization under 42 CFR Part 2 / state mental health law.")
-        if patient.sensitivity == "SENSITIVE" and not policy.can_view_sensitive:
-            trace["sens"] = ControlStep("sens", trace["sens"].label, "block", f"{patient_id} is SENSITIVE — outside role '{role}' scope")
-            return finish(result, "block", "sens", trace["sens"].detail,
-                          "Sensitivity Tier: Access Denied",
-                          f"Role '{role}' is not authorized to access SENSITIVE records (substance use, HIV, reproductive). "
-                          "Minimum necessary access denied.")
-        trace["sens"].detail = f"{patient_id} tier {patient.sensitivity} — within role '{role}' scope"
+                          "Sensitivity Tier: Access Denied", scope_note)
+
+        grant = break_glass.active_grant(role, patient_id) if break_glass else None
+        if patient.sensitivity == "RESTRICTED" and not policy.can_view_restricted and grant is None:
+            return _tier_block("RESTRICTED",
+                               f"Role '{role}' is not authorized to access RESTRICTED records (psychiatric, genetic). "
+                               "Requires separate patient authorization under 42 CFR Part 2 / state mental health law.")
+        if patient.sensitivity == "SENSITIVE" and not policy.can_view_sensitive and grant is None:
+            return _tier_block("SENSITIVE",
+                               f"Role '{role}' is not authorized to access SENSITIVE records (substance use, HIV, reproductive). "
+                               "Minimum necessary access denied.")
+        grant_employed = grant is not None and (
+            (patient.sensitivity == "RESTRICTED" and not policy.can_view_restricted)
+            or (patient.sensitivity == "SENSITIVE" and not policy.can_view_sensitive)
+        )
+        if grant_employed:
+            trace["sens"] = ControlStep("sens", trace["sens"].label, "warn",
+                                        f"BREAK-GLASS grant active for {patient_id} — {grant.minutes_remaining():.0f}m remaining, "
+                                        f"post-hoc compliance review required")
+            result.advisory = ("Break-glass emergency access in effect — this disclosure is flagged for mandatory "
+                               "post-hoc review (accounting of disclosures, 45 CFR §164.528).")
+        else:
+            trace["sens"].detail = f"{patient_id} tier {patient.sensitivity} — within role '{role}' scope"
 
     if tool_name == "send_data_to_vendor":
         trace["baa"] = ControlStep("baa", trace["baa"].label, "pass", "")
@@ -160,12 +180,25 @@ def evaluate(
                           "BAA: Unregistered Vendor",
                           f"Vendor '{vendor_id or 'unknown destination'}' is not in the BAA registry. PHI cannot be transmitted to an unvetted external system. "
                           f"Approved vendors: {list(VENDOR_REGISTRY.keys())}.")
+        if not policy.can_send_to_vendors:
+            trace["baa"] = ControlStep("baa", trace["baa"].label, "block", f"Role '{role}' is not authorized to transmit data externally")
+            return finish(result, "block", "baa", trace["baa"].detail,
+                          "RBAC: Vendor Transmission Not Authorized",
+                          f"Role '{role}' cannot transmit data to external vendors. External disclosure requires a role with "
+                          "vendor-transmission authority (e.g. treating provider or revenue-cycle staff).")
         if patient and patient.sensitivity not in VENDOR_REGISTRY[vendor_id].allowed_sensitivity:
             trace["baa"] = ControlStep("baa", trace["baa"].label, "block", f"{vendor_id} BAA does not cover {patient.sensitivity}")
             return finish(result, "block", "baa", trace["baa"].detail,
                           "BAA: Sensitivity Tier Mismatch",
                           f"Vendor '{VENDOR_REGISTRY[vendor_id].display_name}' BAA does not cover {patient.sensitivity} data "
                           f"(approved for: {VENDOR_REGISTRY[vendor_id].allowed_sensitivity}). De-identify the data or use an appropriate vendor.")
+        if patient and patient.sensitivity in ("SENSITIVE", "RESTRICTED") and not policy.can_send_sensitive_externally:
+            trace["baa"] = ControlStep("baa", trace["baa"].label, "block",
+                                       f"Role '{role}' lacks sensitive-data egress authority ({patient.sensitivity} tier)")
+            return finish(result, "block", "baa", trace["baa"].detail,
+                          "RBAC: Sensitive Data Egress Restricted",
+                          f"Role '{role}' may not transmit {patient.sensitivity}-tier data externally under any BAA. "
+                          "Sensitive-category disclosures require special authorization and a documented accounting (45 CFR §164.528).")
         trace["baa"].detail = f"{vendor_id} BAA verified" + (f" — covers {patient.sensitivity}" if patient else "")
 
         detection = detect_phi(payload)
@@ -207,5 +240,28 @@ def evaluate(
         trace["minnec"].detail = "De-identified scope — direct identifiers removed"
     else:
         trace["minnec"].detail = "Read-only lookup — no PHI disclosed"
+
+    # ── Behavioral minimum-necessary: rolling-window velocity ──
+    # Static checks above validate THIS request; the monitor validates what
+    # the session has ALREADY done (chart-snooping / bulk-exfil patterns).
+    if monitor is not None:
+        if tool_name == "query_patient_record" and patient_id:
+            verdict, velocity_msg = monitor.check_query(role, patient_id)
+        elif tool_name == "send_data_to_vendor" and vendor_id:
+            verdict, velocity_msg = monitor.check_send(role, vendor_id)
+        else:
+            verdict, velocity_msg = "ok", ""
+        if verdict == "block":
+            trace["minnec"] = ControlStep("minnec", trace["minnec"].label, "block", velocity_msg)
+            return finish(result, "block", "minnec", velocity_msg,
+                          "Minimum Necessary: Session Velocity Exceeded",
+                          f"{velocity_msg}. Session usage pattern exceeds the minimum-necessary budget "
+                          "for this role — the request pattern resembles record enumeration or bulk exfiltration.")
+        if verdict == "warn":
+            trace["minnec"] = ControlStep("minnec", trace["minnec"].label, "warn", velocity_msg)
+            if result.advisory is None:
+                result.advisory = f"Minimum-necessary anomaly recorded: {velocity_msg}"
+            else:
+                trace["minnec"].detail = f"{trace['minnec'].detail} — {velocity_msg}"
 
     return result

@@ -66,11 +66,16 @@ def create_agent(
     purpose: str,
     justification: str,
     audit_logger: AuditLogger,
+    session_monitor=None,
+    break_glass=None,
 ) -> tuple[Agent, HIPAASteeringHandler]:
     """
     Create a role-scoped HIPAA agent.
-    
+
     Returns (agent, steering_handler) so the UI can read guardrail events.
+    `session_monitor` and `break_glass` are optional shared session objects;
+    when provided, the steering layer gains behavioral minimum-necessary
+    enforcement and the break-glass emergency path.
     """
     # Register audit logger with tools
     set_audit_logger(audit_logger)
@@ -92,6 +97,8 @@ def create_agent(
         purpose=purpose,
         justification=justification,
         audit_logger=audit_logger,
+        session_monitor=session_monitor,
+        break_glass=break_glass,
     )
 
     system_prompt = ROLE_SYSTEM_PROMPTS.get(role, ROLE_SYSTEM_PROMPTS["physician"])

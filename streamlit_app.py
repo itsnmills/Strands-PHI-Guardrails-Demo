@@ -135,6 +135,8 @@ caption,.stCaption,[data-testid="stCaptionContainer"]{color:var(--faint)}
 st.markdown(CSS, unsafe_allow_html=True)
 
 from app.guardrails.audit_logger import AuditLogger
+from app.guardrails.session_monitor import SessionMonitor
+from app.policies.break_glass import BreakGlassRegistry
 from app.guardrails.policy_engine import evaluate, CONTROL_ORDER
 from app.guardrails.phi_detector import detect_phi
 from app.policies.rbac import ROLE_DISPLAY, ROLE_DESCRIPTIONS, ROLE_POLICIES
@@ -302,22 +304,23 @@ def det_inputs_for(inf: dict, prompt: str, tool: str | None = None) -> dict:
 
 
 def audit_event_from_result(result, mode: str) -> dict:
-    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """Route every UI event through the chained AuditLogger — the trail on screen IS the tamper-evident log."""
     cat = {"query_patient_record": "ACCESS", "send_data_to_vendor": "DISCLOSURE", "log_clinical_note": "MODIFICATION"}.get(result.tool, "POLICY_EVAL")
     phi_warn = bool(result.phi and result.phi.phi_found and not (result.phi.risk_score >= 0.60) and result.tool == "log_clinical_note")
-    st.session_state.seq += 1
-    return {
-        "event_id": f"EVT-{st.session_state.seq:04d}", "timestamp": ts, "category": cat,
-        "outcome": "BLOCKED" if result.outcome == "BLOCKED" else ("WARNING" if phi_warn else "SUCCESS"),
-        "actor_role": result.role, "actor_id": "USER-001", "tool_name": result.tool,
-        "action_description": f"[{mode}] " + (f"Blocked by rule: {result.rule}" if result.outcome == "BLOCKED" else ("Allowed with NLP-gap advisory" if result.advisory else "All guardrail checks passed")),
-        "patient_id": result.patient_id, "vendor_id": result.vendor_id,
-        "policy_rule_triggered": result.rule, "denial_reason": result.reason,
-        "phi_types_detected": [m.phi_type for m in result.phi.matches] if result.phi else [],
-        "risk_score": round(result.phi.risk_score, 2) if result.phi else 0.0,
-        "purpose_of_use": result.purpose, "justification": st.session_state.get("justification", "") or None,
-        "_res": result,
-    }
+    ev = st.session_state.audit_logger.log(
+        category=cat,
+        outcome="BLOCKED" if result.outcome == "BLOCKED" else ("WARNING" if phi_warn else "SUCCESS"),
+        actor_role=result.role, actor_id="USER-001", tool_name=result.tool,
+        action_description=f"[{mode}] " + (f"Blocked by rule: {result.rule}" if result.outcome == "BLOCKED" else ("Allowed with NLP-gap advisory" if result.advisory else "All guardrail checks passed")),
+        patient_id=result.patient_id, vendor_id=result.vendor_id,
+        policy_rule_triggered=result.rule, denial_reason=result.reason,
+        phi_types_detected=[m.phi_type for m in result.phi.matches] if result.phi else [],
+        risk_score=round(result.phi.risk_score, 2) if result.phi else 0.0,
+        purpose_of_use=result.purpose, justification=st.session_state.get("justification", "") or None,
+    )
+    d = asdict(ev)
+    d["_res"] = result
+    return d
 
 
 def run_deterministic(prompt: str, pipe_slot, resp_slot):
@@ -326,6 +329,7 @@ def run_deterministic(prompt: str, pipe_slot, resp_slot):
         role=st.session_state.role, purpose=st.session_state.purpose,
         justification=st.session_state.justification,
         tool_name=inf["tool"], tool_inputs=det_inputs_for(inf, prompt),
+        monitor=st.session_state.session_monitor, break_glass=st.session_state.break_glass,
     )
     steps = [(c.control, c.label, c.status, c.detail) for c in result.steps]
     st.session_state.last_run = {
@@ -389,6 +393,8 @@ def run_live(prompt: str, pipe_slot, resp_slot):
             role=st.session_state.role, actor_id=st.session_state.actor_id,
             purpose=st.session_state.purpose, justification=st.session_state.justification,
             audit_logger=logger,
+            session_monitor=st.session_state.session_monitor,
+            break_glass=st.session_state.break_glass,
         )
     except Exception as e:
         _live_fallback(prompt, pipe_slot, None, f"Agent construction failed ({type(e).__name__}) — deterministic policy echo shown instead.")
@@ -456,6 +462,7 @@ def run_live(prompt: str, pipe_slot, resp_slot):
         role=st.session_state.role, purpose=st.session_state.purpose,
         justification=st.session_state.justification,
         tool_name=tool_eff, tool_inputs=det_inputs_for(inf, prompt, tool_eff),
+        monitor=st.session_state.session_monitor, break_glass=st.session_state.break_glass,
     )
     outcome = "BLOCKED" if blocked else "ALLOWED"
     st.session_state.last_run = {
@@ -491,6 +498,7 @@ def _live_fallback(prompt: str, pipe_slot, resp_slot, note: str):
         role=st.session_state.role, purpose=st.session_state.purpose,
         justification=st.session_state.justification,
         tool_name=inf["tool"], tool_inputs=det_inputs_for(inf, prompt),
+        monitor=st.session_state.session_monitor, break_glass=st.session_state.break_glass,
     )
     st.session_state.last_run = {
         "mode": "live", "result": None,
@@ -728,6 +736,9 @@ def init_state():
         "prompt_text": "",
         "actor_id": "USER-001",
         "audit_logger": AuditLogger(),
+        "session_monitor": SessionMonitor(),
+        "break_glass": BreakGlassRegistry(),
+        "chain_report": None,
         "audit_events": [],
         "last_run": None,
         "run_count": 0,
@@ -797,6 +808,40 @@ with st.sidebar:
         st.session_state.justification = st.text_area("Justification (optional for this purpose)", value="",
                                                       placeholder="Not required", height=32, disabled=True)
     st.caption(PURPOSE_DESCRIPTIONS[purpose])
+    st.divider()
+
+    st.markdown("**Break-Glass · Emergency Override**")
+    st.caption("Time-boxed emergency grant for ONE patient. Every grant is a flagged audit event, reviewed post-hoc (§164.528).")
+    bg_active = st.session_state.break_glass.active_grants()
+    if bg_active:
+        for g in bg_active:
+            st.markdown(
+                f'<div class="ae-kv"><span class="ae-k">active</span><span class="ae-v">'
+                f'{g.role} → {g.patient_id} · {g.minutes_remaining():.0f}m left · token {g.token}</span></div>',
+                unsafe_allow_html=True)
+    bg_c1, bg_c2 = st.columns(2)
+    bg_patient = bg_c1.selectbox("Patient", list(PATIENT_DB.keys()), key="bg_patient")
+    if bg_c2.button("Revoke", use_container_width=True, disabled=not bg_active):
+        st.session_state.break_glass.audit = st.session_state.audit_logger
+        st.session_state.break_glass.revoke(role, st.session_state.bg_patient, actor_id=st.session_state.actor_id)
+        if st.session_state.audit_logger.events:
+            ev = asdict(st.session_state.audit_logger.events[-1])
+            ev["_res"] = None
+            st.session_state.audit_events.insert(0, ev)
+        st.rerun()
+    bg_reason = st.text_area("Emergency justification", key="bg_reason", height=56,
+                             placeholder="≥20 chars — the reason IS the audit trail")
+    if st.button("Grant emergency access", use_container_width=True, type="secondary"):
+        try:
+            st.session_state.break_glass.audit = st.session_state.audit_logger
+            st.session_state.break_glass.grant(role, st.session_state.bg_patient, bg_reason,
+                                               actor_id=st.session_state.actor_id)
+            ev = asdict(st.session_state.audit_logger.events[-1])
+            ev["_res"] = None
+            st.session_state.audit_events.insert(0, ev)
+            st.rerun()
+        except ValueError as err:
+            st.error(str(err))
     st.divider()
 
     st.markdown("**Patient Registry**")
@@ -947,10 +992,28 @@ with aud_slot:
         if st.button("Clear", use_container_width=True):
             st.session_state.audit_events = []
             st.session_state.audit_logger = AuditLogger()
+            st.session_state.session_monitor = SessionMonitor()
+            st.session_state.break_glass = BreakGlassRegistry()
+            st.session_state.chain_report = None
             st.rerun()
+    v1, v2 = st.columns(2)
+    if v1.button("Verify audit chain", use_container_width=True, disabled=not events,
+                 help="Walks the HMAC-SHA256 hash chain — detects any modification, deletion, or reordering of history."):
+        st.session_state.chain_report = st.session_state.audit_logger.verify_chain()
+    bg_pending = len(st.session_state.break_glass.pending_review())
+    v2.metric("Break-glass review queue", bg_pending)
+    if st.session_state.chain_report:
+        cr = st.session_state.chain_report
+        if cr["intact"]:
+            st.markdown(f'<span class="bdg ok">chain intact · {cr["events_checked"]} events · head {cr["chain_head"][:10]}…</span>',
+                        unsafe_allow_html=True)
+        else:
+            st.markdown(f'<span class="bdg deny">TAMPER DETECTED at {cr["broken_at"]} — log integrity compromised</span>',
+                        unsafe_allow_html=True)
     for e in events[:15]:
         cls = {"BLOCKED": "🚫", "WARNING": "⚠️", "SUCCESS": "✅"}.get(e["outcome"], "•")
-        head = f"{cls} {e['tool_name']} · {e['timestamp'][11:19]}"
+        chain_bit = f' · <span style="font-family:IBM Plex Mono;font-size:9px;color:var(--faint)">⛓ {e["entry_hash"][:8]}</span>' if e.get("entry_hash") else ""
+        head = f"{cls} {e['tool_name']} · {e['timestamp'][11:19]}{chain_bit}"
         with st.expander(head):
             st.markdown(f'<div class="ae-kv"><span class="ae-k">event</span><span class="ae-v">{e["event_id"]} · {e["category"]} · {e["outcome"]}</span></div>', unsafe_allow_html=True)
             st.markdown(f'<div class="ae-kv"><span class="ae-k">actor</span><span class="ae-v">{e["actor_role"]} / {e["actor_id"]}</span></div>', unsafe_allow_html=True)
