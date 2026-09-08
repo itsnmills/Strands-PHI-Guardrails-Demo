@@ -1582,7 +1582,7 @@ function initIcons(){
 }
 
 function init(){
-  setTheme(localStorage.getItem('phig.theme')||(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'));
+  setTheme(localStorage.getItem('phig.theme')||'light');
   $('btn-theme').addEventListener('click',()=>{
     setTheme(document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark');
   });
