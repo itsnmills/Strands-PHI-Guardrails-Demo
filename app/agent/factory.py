@@ -13,6 +13,8 @@ instructions about what they can and cannot do.
 """
 
 import os
+import uuid
+
 from strands import Agent
 from strands.models.litellm import LiteLLMModel
 
@@ -80,14 +82,23 @@ def create_agent(
     # Register audit logger with tools
     set_audit_logger(audit_logger)
 
+    # OpenCode Go requires a stable per-conversation session id and a
+    # self-identifying user agent so requests can be routed and cached
+    # (https://opencode.ai/docs/go/#where-can-i-use-it)
+    go_headers = {
+        "x-opencode-session": f"phidemo-{os.getpid()}-{str(uuid.uuid4())[:8]}",
+        "User-Agent": "phidemo-console/1.0 (HIPAA-guardrails demo)",
+    }
+
     model = LiteLLMModel(
-        model_id=f"openai/{os.environ.get('PHI_DEMO_MODEL', 'glm-5.2')}",
+        model_id=f"openai/{os.environ.get('PHI_DEMO_MODEL', 'glm-5.3-flash')}",
         params={
             "api_key": os.environ.get("OPENCODE_API_KEY", "")
             or os.environ.get("OPENROUTER_API_KEY", ""),
             "base_url": os.environ.get(
                 "PHI_DEMO_BASE_URL", "https://opencode.ai/zen/go/v1"
             ),
+            "extra_headers": go_headers,
         },
     )
 

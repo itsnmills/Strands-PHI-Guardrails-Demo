@@ -111,7 +111,7 @@ cp .env.example .env        # set OPENCODE_API_KEY (or OPENROUTER_API_KEY)
 streamlit run streamlit_app.py
 ```
 
-Talks to an OpenAI-compatible gateway (OpenCode Go, default base `https://opencode.ai/zen/go/v1`, default model `glm-5.3-flash`; override with `PHI_DEMO_MODEL` / `PHI_DEMO_BASE_URL`). Without a key it falls back to deterministic mode and every policy path still works. System prompts are deliberately tool-forward — **the model routes requests; the steering layer, not the prompt, decides.** The console streams dispatch → model output → tool request → steering decision → tool execution live, with a verify-chain button on the audit panel and a break-glass control in the sidebar.
+Talks to an OpenAI-compatible gateway (OpenCode Go, default base `https://opencode.ai/zen/go/v1`, default model `glm-5.3-flash`; override with `PHI_DEMO_MODEL` / `PHI_DEMO_BASE_URL`). Requests carry the `x-opencode-session` header and a self-identifying user agent that OpenCode Go requires for routing and prompt caching. Without a key it falls back to deterministic mode and every policy path still works. System prompts are deliberately tool-forward — **the model routes requests; the steering layer, not the prompt, decides.** The console streams dispatch → model output → tool request → steering decision → tool execution live, with a verify-chain button on the audit panel and a break-glass control in the sidebar.
 
 **Tests:** `python -m pytest -q tests`
 
