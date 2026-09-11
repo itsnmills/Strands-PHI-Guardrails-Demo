@@ -761,11 +761,12 @@ CHIP_CSS = """
 .statchip{font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;padding:3px 9px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--muted)}
 .statchip b{color:var(--ink)}
 .statchip.hot{border-color:var(--warn-bd);color:var(--warn);background:var(--warn-bg)}
-[class*="st-key-scen_"] button{width:100%;min-height:104px;text-align:left;justify-content:flex-start;align-items:flex-start;
- white-space:normal;line-height:1.5;padding:13px 15px;border-radius:11px;background:var(--surface);border:1px solid var(--border);
+[class*="st-key-scen_"] button{width:100%;min-height:0;text-align:left;justify-content:flex-start;align-items:flex-start;
+ white-space:normal;line-height:1.3;padding:8px 11px;border-radius:9px;background:var(--surface);border:1px solid var(--border);
  transition:border-color .15s,transform .15s,box-shadow .15s}
 [class*="st-key-scen_"] button:hover{border-color:var(--border-strong);transform:translateY(-1px);box-shadow:0 2px 10px rgba(20,40,30,.07)}
-[class*="st-key-scen_"] button p{font-size:11.5px;margin:0}
+[class*="st-key-scen_"] button p{font-size:11px;margin:0}
+[class*="st-key-scen_"] button p + p{color:var(--muted);font-size:9.5px;margin-top:2px}
 .sechead{display:flex;align-items:center;gap:10px;margin:16px 0 9px}
 .sechead .ldetail{font-size:10.5px;color:var(--muted)}
 </style>
@@ -1241,12 +1242,12 @@ for stype in ("ok", "deny", "adv"):
         f'<div class="sechead">{badge(f"{len(group)} · {SCEN_GROUP[stype]}", badge_cls)}'
         f'<span class="ldetail">{SCEN_GROUP_DESC[stype]}</span></div>',
         unsafe_allow_html=True)
-    cols = st.columns(3)
+    cols = st.columns(4)
     for i, s in enumerate(group):
-        with cols[i % 3]:
-            label = (f"**{SCEN_ICON[stype]} {s['label']}**\n\n{s['desc']}\n\n"
-                     f"{s['cid']} · {ROLE_SHORT.get(s['role'], s['role'])} · {s['purpose']}")
-            if st.button(label, key=f"scen_{s['id']}", use_container_width=True):
+        with cols[i % 4]:
+            label = f"**{SCEN_ICON[stype]} {s['label']}**\n\n{s['cid']} · {ROLE_SHORT.get(s['role'], s['role'])} · {s['purpose']}"
+            if st.button(label, key=f"scen_{s['id']}", use_container_width=True,
+                         help=f"{s['desc']} — sets the session context, then runs."):
                 st.session_state["pending_scenario"] = s["id"]
                 st.rerun()
 
