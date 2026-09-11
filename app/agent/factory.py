@@ -15,10 +15,33 @@ instructions about what they can and cannot do.
 import os
 import uuid
 
+import litellm
 from strands import Agent
 from strands.models.litellm import LiteLLMModel
 
+from app.agent.traffic import TRAFFIC
 from app.guardrails.steering_handler import HIPAASteeringHandler
+
+
+class GoLiteLLMModel(LiteLLMModel):
+    """
+    LiteLLMModel tuned for the OpenCode Go gateway: strips reasoning fields
+    (reasoning_content / reasoning) from formatted messages. Reasoning models
+    emit those on assistant turns, and the Go endpoint rejects them on
+    multi-turn Chat Completions calls ("reasoningContent is not supported…").
+    """
+
+    def format_request(self, messages, tool_specs=None, system_prompt=None, tool_choice=None, *,
+                       system_prompt_content=None, **kwargs):
+        request = super().format_request(
+            messages, tool_specs, system_prompt, tool_choice,
+            system_prompt_content=system_prompt_content, **kwargs,
+        )
+        for msg in request.get("messages", []):
+            if isinstance(msg, dict):
+                for field in ("reasoning_content", "reasoning", "reasoningContent"):
+                    msg.pop(field, None)
+        return request
 from app.guardrails.audit_logger import AuditLogger
 from app.tools.clinical_tools import (
     query_patient_record,
@@ -71,6 +94,7 @@ def create_agent(
     session_monitor=None,
     break_glass=None,
     model: str | None = None,
+    traffic_store: list | None = None,
 ) -> tuple[Agent, HIPAASteeringHandler]:
     """
     Create a role-scoped HIPAA agent.
@@ -80,6 +104,7 @@ def create_agent(
     when provided, the steering layer gains behavioral minimum-necessary
     enforcement and the break-glass emergency path. `model` overrides the
     PHI_DEMO_MODEL environment default (both live on OpenCode Go).
+    `traffic_store` receives a full record of every LLM request/response.
     """
     # Register audit logger with tools
     set_audit_logger(audit_logger)
@@ -92,7 +117,7 @@ def create_agent(
         "User-Agent": "phidemo-console/1.0 (HIPAA-guardrails demo)",
     }
 
-    model = LiteLLMModel(
+    model = GoLiteLLMModel(
         model_id=f"openai/{model or os.environ.get('PHI_DEMO_MODEL', 'glm-5.3-flash')}",
         params={
             "api_key": os.environ.get("OPENCODE_API_KEY", "")
@@ -103,6 +128,10 @@ def create_agent(
             "extra_headers": go_headers,
         },
     )
+
+    # Full request/response visibility: every LLM call lands in the store
+    TRAFFIC.bind(traffic_store if traffic_store is not None else [])
+    litellm.callbacks = [TRAFFIC]
 
     steering = HIPAASteeringHandler(
         role=role,

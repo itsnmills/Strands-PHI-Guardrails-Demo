@@ -396,6 +396,7 @@ def run_live(prompt: str, pipe_slot, resp_slot):
             session_monitor=st.session_state.session_monitor,
             break_glass=st.session_state.break_glass,
             model=st.session_state.get("model_choice"),
+            traffic_store=st.session_state.traffic,
         )
     except Exception as e:
         _live_fallback(prompt, pipe_slot, None, f"Agent construction failed ({type(e).__name__}) — deterministic policy echo shown instead.")
@@ -434,6 +435,20 @@ def run_live(prompt: str, pipe_slot, resp_slot):
                     prog["chunks"] += 1
                     if prog["chunks"] % 6 == 0:
                         draw()
+            elif "result" in ev:
+                try:
+                    res = ev["result"]
+                    u = getattr(res, "usage", None)
+                    prog["usage"] = {
+                        "prompt": getattr(u, "input_tokens", None),
+                        "completion": getattr(u, "output_tokens", None),
+                        "total": getattr(u, "total_tokens", None),
+                    }
+                    dur = getattr(getattr(res, "metrics", None), "duration_ms", None)
+                    if dur:
+                        prog["duration_ms"] = float(dur)
+                except Exception:
+                    pass
             elif any(k in ev for k in ("before_tool_call_event", "before_tool_call", "current_tool_use")):
                 if not prog["steer"]:
                     prog["stage"] = "steering: evaluating six controls"
@@ -453,7 +468,12 @@ def run_live(prompt: str, pipe_slot, resp_slot):
     try:
         asyncio.run(consume())
     except Exception as e:
-        _live_fallback(prompt, pipe_slot, None, f"Live agent interrupted ({type(e).__name__}) — deterministic policy echo shown instead.")
+        note = f"Live agent interrupted ({type(e).__name__}) — deterministic policy echo shown instead."
+        if "usage limit" in str(e).lower() or "ratelimit" in type(e).__name__.lower():
+            note = ("OpenCode Go usage limit reached — the live agent is paused until the weekly reset "
+                    "(or until 'Use balance' is enabled in the OpenCode console). Deterministic policy "
+                    "echo shown instead — every policy path is identical, just no LLM.")
+        _live_fallback(prompt, pipe_slot, None, note)
         return
 
     events = steering.guardrail_events
@@ -466,6 +486,20 @@ def run_live(prompt: str, pipe_slot, resp_slot):
         monitor=st.session_state.session_monitor, break_glass=st.session_state.break_glass,
     )
     outcome = "BLOCKED" if blocked else "ALLOWED"
+    # Seal any litellm records the stream hooks didn't finalize — strands may
+    # stop consuming the underlying stream once the result arrives, so the
+    # final call's success event can be missed. Strands' own result event
+    # supplies usage/duration as the authoritative source.
+    for rec in st.session_state.traffic:
+        if rec["status"] in ("requesting", "streaming"):
+            rec["status"] = "complete"
+            if not rec["stream_text"] and not rec["final_text"]:
+                rec["final_text"] = prog["text"].strip() or None
+            if rec.get("usage") is None and prog.get("usage"):
+                rec["usage"] = prog["usage"]
+            if rec.get("latency_ms") is None and prog.get("duration_ms"):
+                rec["latency_ms"] = round(prog["duration_ms"], 1)
+    trec = next((r for r in reversed(st.session_state.traffic) if r.get("status") == "complete"), None)
     st.session_state.last_run = {
         "mode": "live", "result": None,
         "steps": [(c.control, c.label, c.status, c.detail) for c in det.steps],
@@ -479,6 +513,8 @@ def run_live(prompt: str, pipe_slot, resp_slot):
                   for m in det.phi.matches] if det.phi else [],
         "redacted": det.phi.redacted_text if det.phi else None,
         "risk": det.phi.risk_score if det.phi else 0.0,
+        "traffic_meta": ({"model": trec["model"], "latency_ms": trec.get("latency_ms"), "usage": trec.get("usage")}
+                         if trec else None),
         "overlay": None if events else "The model answered without calling a tool, so the steering handler never ran. "
                                         "This pipeline is a deterministic policy echo of the implied tool call.",
     }
@@ -618,6 +654,34 @@ CHIP_CSS = """
 .gl.warn{color:var(--warn);background:var(--warn-bg);border-color:var(--warn-bd)}
 .gl.block{color:var(--block);background:var(--block-bg);border-color:var(--block-bd)}
 .gl.skip{color:var(--faint);border-color:var(--divider)}
+.tmeta{display:flex;gap:6px;flex-wrap:wrap;margin-top:11px;padding-top:10px;border-top:1px dashed var(--divider)}
+.tchip{font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px 9px}
+.tchip b{color:var(--ink);font-weight:600}
+.doc{font-family:'IBM Plex Sans',sans-serif;font-size:12.5px;line-height:1.7;color:var(--text);margin-top:6px;max-height:300px;overflow:auto;padding:2px 2px}
+.doc h4{font-family:'Space Grotesk';font-size:13.5px;font-weight:700;color:var(--ink);margin:14px 0 5px}
+.doc h4:first-child{margin-top:0}
+.doc p{margin:7px 0}
+.doc ul,.doc ol{margin:6px 0 6px 18px;padding:0}
+.doc li{margin:3px 0}
+.doc b{color:var(--ink)}
+.doc code{font-family:'IBM Plex Mono',monospace;font-size:10.5px;background:var(--surface-2);border:1px solid var(--divider);border-radius:4px;padding:1px 4px}
+.doc blockquote{margin:8px 0;padding:2px 12px;border-left:3px solid var(--accent);color:var(--muted)}
+.doc hr{border:none;border-top:1px solid var(--divider);margin:10px 0}
+.term{background:#0b110e;border:1px solid rgba(53,211,156,.25);border-radius:10px;padding:9px 12px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;line-height:1.85;color:#93b8a7;max-height:230px;overflow:auto}
+.tl{white-space:nowrap;display:flex;gap:9px}
+.tdir{font-weight:700;width:10px;flex-shrink:0}
+.tdir.req{color:#6fd6c0}.tdir.res{color:#a8e063}.tdir.err{color:#ff8f85}.tdir.dim{color:#4e6157}
+.ttime{color:#4e6157}
+.tmod{color:#7fd6c2}
+.tstat{color:#a8e063}.tstat.err{color:#ff8f85}
+.tbit{color:#e0c76a}
+.aedot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;vertical-align:baseline}
+.aedot.pass{background:var(--pass)}.aedot.warn{background:var(--warn)}.aedot.block{background:var(--block)}
+.ahead{font-family:'IBM Plex Mono',monospace;font-size:10.5px;letter-spacing:.02em}
+.statchips{display:flex;gap:5px;flex-wrap:wrap;margin-top:9px}
+.statchip{font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;padding:3px 9px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--muted)}
+.statchip b{color:var(--ink)}
+.statchip.hot{border-color:var(--warn-bd);color:var(--warn);background:var(--warn-bg)}
 </style>
 """
 st.markdown(CHIP_CSS, unsafe_allow_html=True)
@@ -678,6 +742,53 @@ def view_from_run(run: dict) -> dict:
     }
 
 
+def md_lite(text: str) -> str:
+    """Minimal markdown → HTML for agent responses (headings, bold, code, lists, quotes)."""
+    import re as _re
+    out = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    out = _re.sub(r"`([^`]+)`", r"<code>\1</code>", out)
+    out = _re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", out)
+    out = _re.sub(r"^\s*#{1,6}\s+(.+)$", r"<h4>\1</h4>", out, flags=_re.M)
+    out = _re.sub(r"^\s*---+\s*$", "<hr>", out, flags=_re.M)
+    html, in_ul, in_ol = [], False, False
+    for line in out.split("\n"):
+        s = line.strip()
+        if s.startswith("- "):
+            if not in_ul:
+                html.append("<ul>")
+                in_ul = True
+            html.append(f"<li>{s[2:]}</li>")
+            continue
+        if _re.match(r"^\d+\.\s", s):
+            if not in_ol:
+                html.append("<ol>")
+                in_ol = True
+            html.append(f"<li>{_re.sub(r'^\d+\.\s', '', s)}</li>")
+            continue
+        if s.startswith("&gt; "):
+            if in_ul:
+                html.append("</ul>")
+                in_ul = False
+            if in_ol:
+                html.append("</ol>")
+                in_ol = False
+            html.append(f"<blockquote>{s[5:]}</blockquote>")
+            continue
+        if in_ul:
+            html.append("</ul>")
+            in_ul = False
+        if in_ol:
+            html.append("</ol>")
+            in_ol = False
+        if s:
+            html.append(f"<p>{s}</p>" if not s.startswith("<h4>") and not s.startswith("<hr") else s)
+    if in_ul:
+        html.append("</ul>")
+    if in_ol:
+        html.append("</ol>")
+    return "".join(html)
+
+
 def response_html(run: dict) -> str:
     if not run:
         return ('<div class="pline"><div class="ldot">·</div><div><div class="lname">No request yet</div>'
@@ -721,9 +832,21 @@ def response_html(run: dict) -> str:
         parts.append(f'<div class="pay"><div class="pay-body">{red}</div></div>')
     if run.get("response_text"):
         label = "Simulated tool output" if run["mode"] == "det" else "Agent response"
-        parts.append(f'<div style="font-family:\'IBM Plex Mono\',monospace;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-top:10px">{label}</div>')
-        body = run["response_text"].replace("<", "&lt;")
-        parts.append(f'<div class="pay"><div class="pay-body">{body}</div></div>')
+        parts.append(f'<div style="font-family:\'IBM Plex Mono\',monospace;font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-top:12px">{label}</div>')
+        if run["mode"] == "det":
+            body = run["response_text"].replace("<", "&lt;")
+            parts.append(f'<div class="pay"><div class="pay-body">{body}</div></div>')
+        else:
+            parts.append(f'<div class="doc">{md_lite(run["response_text"])}</div>')
+    meta = run.get("traffic_meta")
+    if meta:
+        chips = [f'<span class="tchip">model <b>{meta["model"]}</b></span>']
+        if meta.get("latency_ms") is not None:
+            chips.append(f'<span class="tchip">round-trip <b>{meta["latency_ms"]:.0f} ms</b></span>')
+        u = meta.get("usage")
+        if u:
+            chips.append(f'<span class="tchip">tokens <b>{u.get("prompt", "?")} in / {u.get("completion", "?")} out</b></span>')
+        parts.append('<div class="tmeta">' + "".join(chips) + "</div>")
     return '<div style="display:flex;flex-direction:column;gap:2px">' + "".join(parts) + "</div>"
 
 
@@ -741,6 +864,7 @@ def init_state():
         "break_glass": BreakGlassRegistry(),
         "chain_report": None,
         "disclosure_report": None,
+        "traffic": [],
         "audit_events": [],
         "last_run": None,
         "run_count": 0,
@@ -928,7 +1052,7 @@ c_req, c_pipe, c_aud = st.columns([1.15, 1, 1.05], gap="medium")
 with c_pipe:
     st.markdown("#### Policy pipeline")
 with c_aud:
-    st.markdown("#### Audit trail · §164.312(b)")
+    pass  # heading moved into the audit/traffic tabs inside aud_slot
 
 with c_req:
     st.markdown(
@@ -976,95 +1100,150 @@ resp_slot.markdown(response_html(run), unsafe_allow_html=True)
 pipe_slot.markdown(pipeline_html(view_from_run(run)), unsafe_allow_html=True)
 
 with aud_slot:
-    events = st.session_state.audit_events
-    total = len(events)
-    okn = sum(1 for e in events if e["outcome"] == "SUCCESS")
-    denyn = sum(1 for e in events if e["outcome"] == "BLOCKED")
-    warnn = sum(1 for e in events if e["outcome"] == "WARNING")
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Total", total)
-    m2.metric("Allowed", okn)
-    m3.metric("Denied", denyn)
-    seg = ""
-    if total:
-        for n, c in ((okn, "var(--pass)"), (warnn, "var(--warn)"), (denyn, "var(--block)")):
-            if n:
-                seg += f'<span style="width:{n / total * 100}%;background:{c}"></span>'
-        st.markdown(f'<div class="dist">{seg}</div>', unsafe_allow_html=True)
-    d1, d2, d3 = st.columns(3)
-    d1.download_button("JSON", json.dumps([{k: v for k, v in e.items() if k != "_res"} for e in events], indent=2),
-                       file_name="phi-guardrails-audit.json", mime="application/json", use_container_width=True)
-    d2.download_button("CSV", audit_csv(), file_name="phi-guardrails-audit.csv", mime="text/csv", use_container_width=True)
-    with d3:
-        if st.button("Clear", use_container_width=True):
-            st.session_state.audit_events = []
-            st.session_state.audit_logger = AuditLogger()
-            st.session_state.session_monitor = SessionMonitor()
-            st.session_state.break_glass = BreakGlassRegistry()
-            st.session_state.chain_report = None
-            st.session_state.disclosure_report = None
-            st.rerun()
-    v1, v2, v3 = st.columns(3)
-    if v1.button("Verify audit chain", use_container_width=True, disabled=not events,
-                 help="Walks the HMAC-SHA256 hash chain — detects any modification, deletion, or reordering of history."):
-        st.session_state.chain_report = st.session_state.audit_logger.verify_chain()
-    if v2.button("Disclosure report", use_container_width=True, disabled=not events,
-                 help="Accounting of disclosures (45 CFR §164.528): external sends + break-glass grants, rendered from the audit chain."):
-        from app.compliance.disclosures import disclosure_report
-        st.session_state.disclosure_report = disclosure_report(st.session_state.audit_logger)
-    bg_pending = len(st.session_state.break_glass.pending_review())
-    v3.metric("Break-glass review queue", bg_pending)
-    if st.session_state.chain_report:
-        cr = st.session_state.chain_report
-        if cr["intact"]:
-            st.markdown(f'<span class="bdg ok">chain intact · {cr["events_checked"]} events · head {cr["chain_head"][:10]}…</span>',
-                        unsafe_allow_html=True)
-        else:
-            st.markdown(f'<span class="bdg deny">TAMPER DETECTED at {cr["broken_at"]} — log integrity compromised</span>',
-                        unsafe_allow_html=True)
-    if st.session_state.get("disclosure_report"):
-        dr = st.session_state.disclosure_report
-        with st.expander(f"Accounting of Disclosures · §164.528 — {len(dr.rows)} reportable event(s)", expanded=True):
-            st.caption(f"{dr.excluded_events} non-reportable events reviewed · audit chain "
-                       f"{'intact' if dr.chain_intact else 'COMPROMISED'}")
-            st.code(dr.to_text(), language=None)
-            st.download_button("Download CSV", dr.to_csv(), file_name="disclosure-accounting-164-528.csv",
-                               mime="text/csv", use_container_width=True)
-    for e in events[:15]:
-        cls = {"BLOCKED": "🚫", "WARNING": "⚠️", "SUCCESS": "✅"}.get(e["outcome"], "•")
-        chain_bit = f' · <span style="font-family:IBM Plex Mono;font-size:9px;color:var(--faint)">⛓ {e["entry_hash"][:8]}</span>' if e.get("entry_hash") else ""
-        head = f"{cls} {e['tool_name']} · {e['timestamp'][11:19]}{chain_bit}"
-        with st.expander(head):
-            st.markdown(f'<div class="ae-kv"><span class="ae-k">event</span><span class="ae-v">{e["event_id"]} · {e["category"]} · {e["outcome"]}</span></div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="ae-kv"><span class="ae-k">actor</span><span class="ae-v">{e["actor_role"]} / {e["actor_id"]}</span></div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="ae-kv"><span class="ae-k">purpose</span><span class="ae-v">{e.get("purpose_of_use") or "—"}</span></div>', unsafe_allow_html=True)
-            if e.get("patient_id"):
-                st.markdown(f'<div class="ae-kv"><span class="ae-k">patient</span><span class="ae-v">{e["patient_id"]}</span></div>', unsafe_allow_html=True)
-            if e.get("vendor_id"):
-                st.markdown(f'<div class="ae-kv"><span class="ae-k">vendor</span><span class="ae-v">{e["vendor_id"]}</span></div>', unsafe_allow_html=True)
-            if e.get("policy_rule_triggered"):
-                st.markdown(f'<div class="ae-kv"><span class="ae-k">rule</span><span class="ae-v">{e["policy_rule_triggered"]}</span></div>', unsafe_allow_html=True)
-            if e.get("denial_reason"):
-                st.markdown(f'<div class="ae-kv"><span class="ae-k">denial</span><span class="ae-v deny">{e["denial_reason"]}</span></div>', unsafe_allow_html=True)
-            if e.get("phi_types_detected"):
-                st.markdown(f'<div class="ae-kv"><span class="ae-k">phi types</span><span class="ae-v">{", ".join(e["phi_types_detected"])} · risk {e["risk_score"]}</span></div>', unsafe_allow_html=True)
-            res = e.get("_res")
-            if res is not None and st.button("Replay trace", key=f"replay_{e['event_id']}"):
-                st.session_state.last_run = {
-                    "mode": "det", "result": res,
-                    "steps": [(c.control, c.label, c.status, c.detail) for c in res.steps],
-                    "outcome": res.outcome, "rule": res.rule, "reason": res.reason, "advisory": res.advisory,
-                    "tool": res.tool, "vendor_id": res.vendor_id, "patient_id": res.patient_id,
-                    "prompt": "", "response_text": None,
-                    "spans": [{"type": m.phi_type, "conf": m.confidence, "start": m.start, "end": m.end, "text": m.matched_text}
-                              for m in res.phi.matches] if res.phi else [],
-                    "redacted": res.phi.redacted_text if res.phi else None,
-                    "risk": res.phi.risk_score if res.phi else 0.0,
-                    "overlay": None,
-                }
+    tab_audit, tab_traffic = st.tabs(["Audit trail · §164.312(b)", "Model traffic · live wire"])
+    with tab_audit:
+        events = st.session_state.audit_events
+        total = len(events)
+        okn = sum(1 for e in events if e["outcome"] == "SUCCESS")
+        denyn = sum(1 for e in events if e["outcome"] == "BLOCKED")
+        warnn = sum(1 for e in events if e["outcome"] == "WARNING")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Total", total)
+        m2.metric("Allowed", okn)
+        m3.metric("Denied", denyn)
+        seg = ""
+        if total:
+            for n, c in ((okn, "var(--pass)"), (warnn, "var(--warn)"), (denyn, "var(--block)")):
+                if n:
+                    seg += f'<span style="width:{n / total * 100}%;background:{c}"></span>'
+            st.markdown(f'<div class="dist">{seg}</div>', unsafe_allow_html=True)
+        phi_n = sum(1 for e in events if e.get("phi_types_detected"))
+        anom = st.session_state.session_monitor.anomaly_count
+        bgc = len(st.session_state.break_glass.pending_review())
+        st.markdown(
+            '<div class="statchips">'
+            + f'<span class="statchip{" hot" if bgc else ""}">break-glass <b>{bgc}</b></span>'
+            + f'<span class="statchip">velocity anomalies <b>{anom}</b></span>'
+            + f'<span class="statchip">phi-flagged <b>{phi_n}</b></span>'
+            + "</div>", unsafe_allow_html=True)
+        d1, d2, d3 = st.columns(3)
+        d1.download_button("JSON", json.dumps([{k: v for k, v in e.items() if k != "_res"} for e in events], indent=2),
+                           file_name="phi-guardrails-audit.json", mime="application/json", use_container_width=True)
+        d2.download_button("CSV", audit_csv(), file_name="phi-guardrails-audit.csv", mime="text/csv", use_container_width=True)
+        with d3:
+            if st.button("Clear", use_container_width=True):
+                st.session_state.audit_events = []
+                st.session_state.audit_logger = AuditLogger()
+                st.session_state.session_monitor = SessionMonitor()
+                st.session_state.break_glass = BreakGlassRegistry()
+                st.session_state.chain_report = None
+                st.session_state.disclosure_report = None
                 st.rerun()
-    if total > 15:
-        st.caption(f"Showing 15 of {total} events — export for the full trail.")
+        v1, v2, v3 = st.columns(3)
+        if v1.button("Verify audit chain", use_container_width=True, disabled=not events,
+                     help="Walks the HMAC-SHA256 hash chain — detects any modification, deletion, or reordering of history."):
+            st.session_state.chain_report = st.session_state.audit_logger.verify_chain()
+        if v2.button("Disclosure report", use_container_width=True, disabled=not events,
+                     help="Accounting of disclosures (45 CFR §164.528): external sends + break-glass grants, rendered from the audit chain."):
+            from app.compliance.disclosures import disclosure_report
+            st.session_state.disclosure_report = disclosure_report(st.session_state.audit_logger)
+        bg_pending = len(st.session_state.break_glass.pending_review())
+        v3.metric("Break-glass review queue", bg_pending)
+        if st.session_state.chain_report:
+            cr = st.session_state.chain_report
+            if cr["intact"]:
+                st.markdown(f'<span class="bdg ok">chain intact · {cr["events_checked"]} events · head {cr["chain_head"][:10]}…</span>',
+                            unsafe_allow_html=True)
+            else:
+                st.markdown(f'<span class="bdg deny">TAMPER DETECTED at {cr["broken_at"]} — log integrity compromised</span>',
+                            unsafe_allow_html=True)
+        if st.session_state.get("disclosure_report"):
+            dr = st.session_state.disclosure_report
+            with st.expander(f"Accounting of Disclosures · §164.528 — {len(dr.rows)} reportable event(s)", expanded=True):
+                st.caption(f"{dr.excluded_events} non-reportable events reviewed · audit chain "
+                           f"{'intact' if dr.chain_intact else 'COMPROMISED'}")
+                st.code(dr.to_text(), language=None)
+                st.download_button("Download CSV", dr.to_csv(), file_name="disclosure-accounting-164-528.csv",
+                                   mime="text/csv", use_container_width=True)
+        for e in events[:15]:
+            cls = {"BLOCKED": "🚫", "WARNING": "⚠️", "SUCCESS": "✅"}.get(e["outcome"], "•")
+            chain_bit = f" · ⛓ {e['entry_hash'][:8]}" if e.get("entry_hash") else ""
+            head = f"{cls} {e['tool_name']} · {e['category'].lower()} · {e['timestamp'][11:19]}{chain_bit}"
+            with st.expander(head):
+                st.markdown(f'<div class="ae-kv"><span class="ae-k">event</span><span class="ae-v">{e["event_id"]} · {e["category"]} · {e["outcome"]}</span></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="ae-kv"><span class="ae-k">actor</span><span class="ae-v">{e["actor_role"]} / {e["actor_id"]}</span></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="ae-kv"><span class="ae-k">purpose</span><span class="ae-v">{e.get("purpose_of_use") or "—"}</span></div>', unsafe_allow_html=True)
+                if e.get("patient_id"):
+                    st.markdown(f'<div class="ae-kv"><span class="ae-k">patient</span><span class="ae-v">{e["patient_id"]}</span></div>', unsafe_allow_html=True)
+                if e.get("vendor_id"):
+                    st.markdown(f'<div class="ae-kv"><span class="ae-k">vendor</span><span class="ae-v">{e["vendor_id"]}</span></div>', unsafe_allow_html=True)
+                if e.get("policy_rule_triggered"):
+                    st.markdown(f'<div class="ae-kv"><span class="ae-k">rule</span><span class="ae-v">{e["policy_rule_triggered"]}</span></div>', unsafe_allow_html=True)
+                if e.get("denial_reason"):
+                    st.markdown(f'<div class="ae-kv"><span class="ae-k">denial</span><span class="ae-v deny">{e["denial_reason"]}</span></div>', unsafe_allow_html=True)
+                if e.get("phi_types_detected"):
+                    st.markdown(f'<div class="ae-kv"><span class="ae-k">phi types</span><span class="ae-v">{", ".join(e["phi_types_detected"])} · risk {e["risk_score"]}</span></div>', unsafe_allow_html=True)
+                res = e.get("_res")
+                if res is not None and st.button("Replay trace", key=f"replay_{e['event_id']}"):
+                    st.session_state.last_run = {
+                        "mode": "det", "result": res,
+                        "steps": [(c.control, c.label, c.status, c.detail) for c in res.steps],
+                        "outcome": res.outcome, "rule": res.rule, "reason": res.reason, "advisory": res.advisory,
+                        "tool": res.tool, "vendor_id": res.vendor_id, "patient_id": res.patient_id,
+                        "prompt": "", "response_text": None,
+                        "spans": [{"type": m.phi_type, "conf": m.confidence, "start": m.start, "end": m.end, "text": m.matched_text}
+                                  for m in res.phi.matches] if res.phi else [],
+                        "redacted": res.phi.redacted_text if res.phi else None,
+                        "risk": res.phi.risk_score if res.phi else 0.0,
+                        "overlay": None,
+                    }
+                    st.rerun()
+        if total > 15:
+            st.caption(f"Showing 15 of {total} events — export for the full trail.")
+    with tab_traffic:
+        recs = st.session_state.traffic
+        st.caption("Everything sent to and received from the model — full-fidelity request messages, streaming chunks, usage and latency. No black box.")
+        lines = []
+        for r in reversed(recs[-14:]):
+            stl = r.get("status", "?")
+            arrow = {"requesting": "→", "streaming": "⇄", "complete": "←", "error": "✕"}.get(stl, "·")
+            dcls = {"requesting": "req", "complete": "res", "error": "err"}.get(stl, "dim")
+            lat = f"{r['latency_ms']:.0f}ms" if r.get("latency_ms") is not None else "—"
+            u = r.get("usage")
+            tok = f"{u['total']} tok" if u else "—"
+            lines.append(
+                f'<div class="tl"><span class="tdir {dcls}">{arrow}</span>'
+                f'<span class="ttime">{r["ts"]}</span><span class="tmod">{r["model"]}</span>'
+                f'<span class="tstat {"err" if stl == "error" else ""}">{stl}</span>'
+                f'<span class="tbit">{lat}</span><span class="tbit">{tok}</span></div>'
+            )
+        if lines:
+            st.markdown('<div class="term">' + "".join(lines) + "</div>", unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="term"><div class="tl"><span class="tdir dim">▍</span>'
+                        '<span class="ttime">waiting for the first live run…</span></div></div>', unsafe_allow_html=True)
+        for r in reversed(recs[-14:]):
+            head = f'{r["ts"]} · {r["model"]} · {r.get("status")}' + (
+                f" · {r['latency_ms']:.0f}ms" if r.get("latency_ms") is not None else "")
+            with st.expander(head, expanded=False):
+                st.caption("REQUEST — messages exactly as sent (system prompt, session context, tool intent)")
+                st.code(json.dumps(r["request_messages"], indent=2)[:9000], language="json")
+                if r.get("status") == "error":
+                    st.error(r.get("error") or "request failed")
+                else:
+                    if r.get("stream_reasoning"):
+                        with st.expander("reasoning stream", expanded=False):
+                            st.code(r["stream_reasoning"][:4000], language=None)
+                    text = r.get("stream_text") or r.get("final_text")
+                    if text:
+                        st.caption("RESPONSE — accumulated stream output")
+                        st.code(text[:6000], language=None)
+                    else:
+                        st.caption("no text content captured")
+                    if r.get("usage"):
+                        st.caption(f"usage · prompt {r['usage'].get('prompt')} / completion {r['usage'].get('completion')} "
+                                   f"/ total {r['usage'].get('total')} tokens · latency {r.get('latency_ms')} ms")
+
 
 st.divider()
 
