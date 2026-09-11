@@ -31,7 +31,7 @@ from app.policies.rbac import get_policy, can_access_record, ClinicalRole
 from app.policies.purpose_of_use import validate_purpose, PURPOSE_POLICIES
 from app.policies.break_glass import BreakGlassRegistry
 from app.data.vendors import VENDOR_REGISTRY, BLOCKED_PLATFORMS
-from app.data.patients import PATIENT_DB
+from app.data.patients import PATIENT_DB, resolve_patient_id
 
 
 class HIPAASteeringHandler(SteeringHandler):
@@ -178,7 +178,8 @@ class HIPAASteeringHandler(SteeringHandler):
 
         # ── 3. Sensitivity tier enforcement ───────────────────
         if tool_name == "query_patient_record":
-            patient_id = tool_input.get("patient_id", "")
+            raw_pid = tool_input.get("patient_id", "")
+            patient_id = resolve_patient_id(raw_pid) or raw_pid
             if patient_id in PATIENT_DB:
                 patient = PATIENT_DB[patient_id]
                 accessible, access_reason = can_access_record(self.role, patient.sensitivity)
@@ -275,7 +276,8 @@ class HIPAASteeringHandler(SteeringHandler):
                 )
 
             # Check if vendor BAA covers this sensitivity tier
-            patient_id = tool_input.get("patient_id", "")
+            raw_pid = tool_input.get("patient_id", "")
+            patient_id = resolve_patient_id(raw_pid) or raw_pid
             if patient_id in PATIENT_DB:
                 patient = PATIENT_DB[patient_id]
                 if patient.sensitivity not in vendor.allowed_sensitivity:
@@ -350,7 +352,8 @@ class HIPAASteeringHandler(SteeringHandler):
         # Mirrors policy_engine.evaluate(..., monitor=...) — warn at budget, block at 2×.
         if self.session_monitor is not None:
             if tool_name == "query_patient_record" and tool_input.get("patient_id"):
-                verdict, velocity_msg = self.session_monitor.check_query(self.role, tool_input.get("patient_id"))
+                velocity_pid = resolve_patient_id(tool_input.get("patient_id")) or tool_input.get("patient_id")
+                verdict, velocity_msg = self.session_monitor.check_query(self.role, velocity_pid)
             elif tool_name == "send_data_to_vendor" and tool_input.get("vendor_id"):
                 verdict, velocity_msg = self.session_monitor.check_send(self.role, tool_input.get("vendor_id"))
             else:

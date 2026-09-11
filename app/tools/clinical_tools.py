@@ -15,7 +15,7 @@ import json
 import datetime
 from strands import tool
 
-from app.data.patients import PATIENT_DB
+from app.data.patients import PATIENT_DB, resolve_patient_id
 from app.data.vendors import VENDOR_REGISTRY
 from app.guardrails.phi_detector import detect_phi, redact
 
@@ -50,18 +50,16 @@ def query_patient_record(patient_id: str) -> str:
     Query a patient record from the EHR system.
     
     Args:
-        patient_id: Patient identifier (e.g. 'P001', 'P002', 'P003', 'P004')
-    
-    Returns the full patient record including PHI fields.
-    Access is controlled by the HIPAA steering handler based on role and purpose.
+        patient_id: Patient identifier (e.g. 'P001', 'P002', 'P003', 'P004') or full name
     """
-    if patient_id not in PATIENT_DB:
+    resolved = resolve_patient_id(patient_id) or patient_id
+    if resolved not in PATIENT_DB:
         return json.dumps({
             "error": f"Patient '{patient_id}' not found.",
             "valid_ids": list(PATIENT_DB.keys()),
         })
     
-    patient = PATIENT_DB[patient_id]
+    patient = PATIENT_DB[resolved]
     return json.dumps({
         "patient_id": patient.patient_id,
         "name": patient.name,
@@ -84,13 +82,15 @@ def get_deidentified_summary(patient_id: str, purpose: str = "clinical") -> str:
     All 18 HIPAA identifiers are removed. Only clinical facts are included.
     
     Args:
-        patient_id: Patient identifier (e.g. 'P001')
+        patient_id: Patient identifier (e.g. 'P001') or full name
         purpose: Context for the summary — 'clinical', 'research', 'handoff', 'billing'
     """
-    if patient_id not in PATIENT_DB:
+    resolved = resolve_patient_id(patient_id) or patient_id
+    if resolved not in PATIENT_DB:
         return json.dumps({"error": f"Patient '{patient_id}' not found."})
     
-    patient = PATIENT_DB[patient_id]
+    patient = PATIENT_DB[resolved]
+    patient_id = resolved
 
     # Billing summaries include diagnosis codes but not clinical notes
     if purpose == "billing":

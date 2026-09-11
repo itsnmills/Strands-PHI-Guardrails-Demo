@@ -32,6 +32,24 @@ class PatientRecord:
     notes: str = ""
 
 
+def resolve_patient_id(reference: str | None) -> str | None:
+    """
+    Resolve a patient reference (ID, name, or case variant) to a canonical patient_id.
+
+    Models and humans type different things — 'P003', 'p003', or 'Sarah Connor'.
+    Policy checks must apply to what was actually sent, so both the policy layer
+    and the tool layer resolve identifiers through this single function.
+    Names match case-insensitively and must resolve unambiguously.
+    """
+    if not reference or not isinstance(reference, str):
+        return None
+    ref = reference.strip()
+    if ref.upper() in PATIENT_DB:
+        return ref.upper()
+    matches = [pid for pid, p in PATIENT_DB.items() if p.name.lower() == ref.lower()]
+    return matches[0] if len(matches) == 1 else None
+
+
 PATIENT_DB: dict[str, PatientRecord] = {
     "P001": PatientRecord(
         patient_id="P001",

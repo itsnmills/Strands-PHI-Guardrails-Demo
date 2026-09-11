@@ -22,7 +22,7 @@ from app.policies.rbac import get_policy
 from app.policies.purpose_of_use import PURPOSE_POLICIES
 from app.policies.break_glass import BreakGlassRegistry
 from app.data.vendors import VENDOR_REGISTRY, BLOCKED_PLATFORMS
-from app.data.patients import PATIENT_DB
+from app.data.patients import PATIENT_DB, resolve_patient_id
 
 CONTROL_ORDER: list[tuple[str, str]] = [
     ("rbac", "RBAC — Role Authorization"),
@@ -87,7 +87,8 @@ def evaluate(
     for cid, label in CONTROL_ORDER:
         trace[cid] = ControlStep(control=cid, label=label, status="skip", detail="Not applicable to this action")
 
-    patient_id = tool_inputs.get("patient_id") or None
+    patient_ref = tool_inputs.get("patient_id") or None
+    patient_id = resolve_patient_id(patient_ref) or patient_ref
     patient = PATIENT_DB.get(patient_id) if patient_id else None
     vendor_id = tool_inputs.get("vendor_id") or None
     payload = tool_inputs.get("data", "") if isinstance(tool_inputs.get("data"), str) else tool_inputs.get("note", "")
