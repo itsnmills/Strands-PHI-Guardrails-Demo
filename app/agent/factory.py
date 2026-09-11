@@ -124,7 +124,7 @@ def create_agent(
                     or os.environ.get("OPENROUTER_API_KEY", ""))
 
     model = GoLiteLLMModel(
-        model_id=f"openai/{model or os.environ.get('PHI_DEMO_MODEL', 'glm-5.3-flash')}",
+        model_id=f"openai/{model or os.environ.get('PHI_DEMO_MODEL', 'deepseek-v4.1-flash')}",
         params={
             "api_key": resolved_key,
             "base_url": os.environ.get(

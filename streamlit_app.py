@@ -824,7 +824,7 @@ def validate_api_key(key: str) -> tuple[bool, str]:
     import litellm
     try:
         litellm.completion(
-            model=f"openai/{st.session_state.get('model_choice') or os.environ.get('PHI_DEMO_MODEL', 'glm-5.3-flash')}",
+            model=f"openai/{st.session_state.get('model_choice') or os.environ.get('PHI_DEMO_MODEL', 'deepseek-v4.1-flash')}",
             messages=[{"role": "user", "content": "ping"}],
             api_key=key,
             base_url=os.environ.get("PHI_DEMO_BASE_URL", "https://opencode.ai/zen/go/v1"),
@@ -983,10 +983,13 @@ with st.sidebar:
     if not has_key:
         st.caption("No key found — add one above (or `OPENCODE_API_KEY` in `.env`) to enable the live agent.")
     else:
+        model_options = ["deepseek-v4.1-flash", "deepseek-v4-flash", "glm-5.3-flash"]
+        env_default = os.environ.get("PHI_DEMO_MODEL", "deepseek-v4.1-flash")
         model_choice = st.selectbox(
             "Model",
-            ["glm-5.3-flash", "deepseek-v4-flash"],
-            help="Both served by OpenCode Go. DeepSeek V4 Flash has cheaper off-peak pricing (01:00–04:00, 06:00–10:00 UTC weekdays).",
+            model_options,
+            index=model_options.index(env_default) if env_default in model_options else 0,
+            help="All served by OpenCode Go. DeepSeek models have cheaper off-peak pricing (01:00–04:00, 06:00–10:00 UTC weekdays).",
         )
         st.session_state.model_choice = model_choice
         st.caption(f"via `{os.environ.get('PHI_DEMO_BASE_URL', 'https://opencode.ai/zen/go/v1')}`")
