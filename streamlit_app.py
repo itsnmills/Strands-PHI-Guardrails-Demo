@@ -397,6 +397,7 @@ def run_live(prompt: str, pipe_slot, resp_slot):
             break_glass=st.session_state.break_glass,
             model=st.session_state.get("model_choice"),
             traffic_store=st.session_state.traffic,
+            api_key=effective_api_key(),
         )
     except Exception as e:
         _live_fallback(prompt, pipe_slot, None, f"Agent construction failed ({type(e).__name__}) — deterministic policy echo shown instead.")
@@ -789,6 +790,60 @@ def md_lite(text: str) -> str:
     return "".join(html)
 
 
+def effective_api_key() -> str:
+    """Session key (memory only) takes priority over the .env credential."""
+    return ((st.session_state.get("runtime_api_key") or "").strip()
+            or os.environ.get("OPENCODE_API_KEY", "")
+            or os.environ.get("OPENROUTER_API_KEY", ""))
+
+
+def key_source() -> str:
+    if (st.session_state.get("runtime_api_key") or "").strip():
+        return "session key (memory only)"
+    if os.environ.get("OPENCODE_API_KEY"):
+        return ".env · OPENCODE_API_KEY"
+    if os.environ.get("OPENROUTER_API_KEY"):
+        return ".env · OPENROUTER_API_KEY"
+    return "none"
+
+
+def key_fingerprint(key: str) -> str:
+    """Display-safe identifier: last 4 chars + SHA-256 prefix. Never the full key."""
+    if not key:
+        return "—"
+    import hashlib
+    return f"••••{key[-4:]} · sha256:{hashlib.sha256(key.encode()).hexdigest()[:8]}"
+
+
+def validate_api_key(key: str) -> tuple[bool, str]:
+    """
+    Verify a key against the configured endpoint with a minimal call.
+    A 401/403 means the key is wrong; a rate-limit/quota error means the key
+    was ACCEPTED but the plan is capped — still a valid credential.
+    """
+    import litellm
+    try:
+        litellm.completion(
+            model=f"openai/{st.session_state.get('model_choice') or os.environ.get('PHI_DEMO_MODEL', 'glm-5.3-flash')}",
+            messages=[{"role": "user", "content": "ping"}],
+            api_key=key,
+            base_url=os.environ.get("PHI_DEMO_BASE_URL", "https://opencode.ai/zen/go/v1"),
+            extra_headers={"x-opencode-session": "phidemo-keycheck",
+                           "User-Agent": "phidemo-console/1.0 (key validation)"},
+            max_tokens=4,
+            timeout=20,
+        )
+        return True, "key verified — live model responded"
+    except Exception as e:
+        name = type(e).__name__
+        msg = str(e)
+        if "usage limit" in msg.lower() or "ratelimit" in name.lower():
+            return True, "key accepted (plan quota currently capped)"
+        if "auth" in name.lower() or "401" in msg or "403" in msg or "invalid" in msg.lower():
+            return False, f"key rejected: {name}"
+        return False, f"{name}: {msg[:140]}"
+
+
 def response_html(run: dict) -> str:
     if not run:
         return ('<div class="pline"><div class="ldot">·</div><div><div class="lname">No request yet</div>'
@@ -865,6 +920,7 @@ def init_state():
         "chain_report": None,
         "disclosure_report": None,
         "traffic": [],
+        "runtime_api_key": "",
         "audit_events": [],
         "last_run": None,
         "run_count": 0,
@@ -891,7 +947,30 @@ with st.sidebar:
     )
     st.divider()
 
-    has_key = bool(os.environ.get("OPENCODE_API_KEY") or os.environ.get("OPENROUTER_API_KEY"))
+    with st.expander("API key · session credential", expanded=not effective_api_key()):
+        st.caption("Held in server memory for this session only — never written to disk, logs, exports, or the traffic terminal.")
+        st.markdown(
+            f'<div class="ae-kv"><span class="ae-k">source</span><span class="ae-v">{key_source()}</span></div>'
+            f'<div class="ae-kv"><span class="ae-k">fingerprint</span><span class="ae-v">{key_fingerprint(effective_api_key())}</span></div>',
+            unsafe_allow_html=True)
+        new_key = st.text_input("New key", type="password", key="key_input",
+                                placeholder="sk-…", label_visibility="collapsed",
+                                help="Paste an OpenCode (or OpenRouter) key. Validated against the endpoint before use.")
+        kc1, kc2 = st.columns(2)
+        if kc1.button("Use key", use_container_width=True, disabled=not (new_key or "").strip()):
+            with st.spinner("Validating key…"):
+                ok, msg = validate_api_key(new_key.strip())
+            if ok:
+                st.session_state.runtime_api_key = new_key.strip()
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(msg)
+        if kc2.button("Clear key", use_container_width=True, disabled=key_source() == "none"):
+            st.session_state.runtime_api_key = ""
+            st.rerun()
+
+    has_key = bool(effective_api_key())
     mode = st.radio(
         "Engine",
         ["Deterministic policy engine", "Live agent (LLM)"],
@@ -902,7 +981,7 @@ with st.sidebar:
     )
     st.session_state.mode = "det" if (mode.startswith("Deterministic") or not has_key) else "live"
     if not has_key:
-        st.caption("No API key found — live mode unavailable. Add OPENCODE_API_KEY (or OPENROUTER_API_KEY) to `.env`.")
+        st.caption("No key found — add one above (or `OPENCODE_API_KEY` in `.env`) to enable the live agent.")
     else:
         model_choice = st.selectbox(
             "Model",

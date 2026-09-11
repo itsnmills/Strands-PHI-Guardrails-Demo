@@ -95,6 +95,7 @@ def create_agent(
     break_glass=None,
     model: str | None = None,
     traffic_store: list | None = None,
+    api_key: str | None = None,
 ) -> tuple[Agent, HIPAASteeringHandler]:
     """
     Create a role-scoped HIPAA agent.
@@ -105,6 +106,8 @@ def create_agent(
     enforcement and the break-glass emergency path. `model` overrides the
     PHI_DEMO_MODEL environment default (both live on OpenCode Go).
     `traffic_store` receives a full record of every LLM request/response.
+    `api_key` overrides the environment credential (session-supplied key —
+    held in memory only).
     """
     # Register audit logger with tools
     set_audit_logger(audit_logger)
@@ -117,11 +120,13 @@ def create_agent(
         "User-Agent": "phidemo-console/1.0 (HIPAA-guardrails demo)",
     }
 
+    resolved_key = (api_key or os.environ.get("OPENCODE_API_KEY", "")
+                    or os.environ.get("OPENROUTER_API_KEY", ""))
+
     model = GoLiteLLMModel(
         model_id=f"openai/{model or os.environ.get('PHI_DEMO_MODEL', 'glm-5.3-flash')}",
         params={
-            "api_key": os.environ.get("OPENCODE_API_KEY", "")
-            or os.environ.get("OPENROUTER_API_KEY", ""),
+            "api_key": resolved_key,
             "base_url": os.environ.get(
                 "PHI_DEMO_BASE_URL", "https://opencode.ai/zen/go/v1"
             ),
