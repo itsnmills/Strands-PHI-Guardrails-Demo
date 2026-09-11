@@ -669,6 +669,20 @@ def badge(text: str, cls: str) -> str:
     return f'<span class="bdg {cls}">{text}</span>'
 
 
+def panel_head(icon: str, title: str, sub: str = "", chip: str = "") -> str:
+    sub_html = f'<div class="psub">{sub}</div>' if sub else ""
+    return (f'<div class="phead"><span class="picon">{icon}</span>'
+            f'<div style="flex:1;min-width:0;line-height:1.25"><div class="ptitle">{title}</div>{sub_html}</div>'
+            f'{chip}</div>')
+
+
+def tiles_html(total: int, okn: int, denyn: int) -> str:
+    return ('<div class="tiles">'
+            f'<div class="tile"><div class="n">{total}</div><div class="l">total</div></div>'
+            f'<div class="tile ok"><div class="n">{okn}</div><div class="l">allowed</div></div>'
+            f'<div class="tile deny"><div class="n">{denyn}</div><div class="l">denied</div></div></div>')
+
+
 CHIP_CSS = """
 <style>
 .bdg{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:3px 10px;border-radius:999px;border:1px solid;margin-right:5px}
@@ -769,6 +783,22 @@ CHIP_CSS = """
 [class*="st-key-scen_"] button p + p{color:var(--muted);font-size:9.5px;margin-top:2px}
 .sechead{display:flex;align-items:center;gap:10px;margin:16px 0 9px}
 .sechead .ldetail{font-size:10.5px;color:var(--muted)}
+[class*="st-key-panel_"][data-testid="stVerticalBlock"]{
+ background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:14px 16px 12px;
+ box-shadow:0 1px 3px rgba(20,40,30,.04);min-height:620px}
+.phead{display:flex;align-items:center;gap:10px;padding:0 0 11px;border-bottom:1px solid var(--divider);margin-bottom:11px}
+.picon{width:28px;height:28px;border-radius:9px;background:var(--accent-dim);color:var(--accent);display:flex;
+ align-items:center;justify-content:center;font-size:13px;flex-shrink:0;border:1px solid rgba(12,122,85,.25)}
+.ptitle{font-family:'Space Grotesk';font-weight:700;font-size:14.5px;color:var(--ink);line-height:1.2}
+.psub{font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);margin-top:2px}
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin:2px 0 9px}
+.tile{background:var(--surface-2);border:1px solid var(--border);border-radius:11px;padding:9px 6px 7px;text-align:center}
+.tile .n{font-family:'Space Grotesk';font-weight:700;font-size:21px;color:var(--ink);line-height:1}
+.tile .l{font-family:'IBM Plex Mono',monospace;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-top:4px}
+.tile.ok .n{color:var(--pass)}.tile.deny .n{color:var(--block)}.tile.warn .n{color:var(--warn)}
+.stTextArea textarea{border-radius:10px;background:var(--surface-2);font-size:12.5px;line-height:1.55;border-color:var(--border)}
+.stTextArea textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+.resp{margin-top:10px}
 </style>
 """
 st.markdown(CHIP_CSS, unsafe_allow_html=True)
@@ -1260,51 +1290,84 @@ st.divider()
 
 c_req, c_pipe, c_aud = st.columns([1.15, 1, 1.05], gap="medium")
 
-with c_pipe:
-    st.markdown("#### Policy pipeline")
-with c_aud:
-    pass  # heading moved into the audit/traffic tabs inside aud_slot
-
+# ── Request Console panel ───────────────────────────────────────
 with c_req:
-    st.markdown(
-        badge(ROLE_DISPLAY[st.session_state.role], "role")
-        + badge(st.session_state.purpose, "purpose"),
-        unsafe_allow_html=True,
-    )
-    st.text_area("Prompt", key="prompt_text", height=128,
-                 placeholder="Enter a clinical request, or pick a scenario above…", label_visibility="collapsed")
-
-    prompt_now = st.session_state.prompt_text
-    spans_now = lens_spans(prompt_now) if prompt_now else []
-    if spans_now:
+    with st.container(border=True, key="panel_req"):
+        prompt_now = st.session_state.prompt_text
+        spans_now = lens_spans(prompt_now) if prompt_now else []
         hi = [s for s in spans_now if s["conf"] >= 0.70]
         lo = [s for s in spans_now if s["conf"] < 0.70]
-        chips = []
         if hi:
-            chips.append(badge(f"{len(hi)} high-confidence · " + ", ".join(sorted({s['type'] for s in hi})), "deny"))
-        if lo:
-            chips.append(badge(f"{len(lo)} low-confidence · " + ", ".join(sorted({s['type'] for s in lo})), "warn"))
-        st.markdown("PHI lens: " + "".join(chips), unsafe_allow_html=True)
-    elif prompt_now and _NARRATIVE_CUES.search(prompt_now):
-        st.markdown("PHI lens: " + badge("narrative PHI cues — regex can't confirm (NLP gap)", "warn"), unsafe_allow_html=True)
-    elif prompt_now:
-        st.markdown("PHI lens: " + badge("no PHI patterns detected", "ok"), unsafe_allow_html=True)
+            lens_chip = badge(f"PHI · {len(hi)} high-confidence", "deny")
+        elif lo:
+            lens_chip = badge(f"PHI · {len(lo)} low-confidence", "warn")
+        elif prompt_now and _NARRATIVE_CUES.search(prompt_now):
+            lens_chip = badge("PHI · narrative cues", "warn")
+        elif prompt_now:
+            lens_chip = badge("PHI · clean", "ok")
+        else:
+            lens_chip = badge("awaiting prompt", "mono")
+        st.markdown(
+            panel_head("▤", "Request Console",
+                       sub=f"{ROLE_DISPLAY[st.session_state.role]} · {st.session_state.purpose}",
+                       chip=lens_chip),
+            unsafe_allow_html=True,
+        )
+        st.text_area("Prompt", key="prompt_text", height=132,
+                     placeholder="Enter a clinical request, or pick a scenario above…", label_visibility="collapsed")
 
-    b1, b2 = st.columns([2, 1])
-    with b1:
-        if st.button("Run Guardrails", type="primary", use_container_width=True):
-            st.session_state["do_run"] = True
-    with b2:
-        if st.button("Reset", use_container_width=True):
-            st.session_state["do_reset"] = True
-            st.rerun()
+        if spans_now:
+            chips = []
+            if hi:
+                chips.append(badge("high-confidence · " + ", ".join(sorted({s['type'] for s in hi})), "deny"))
+            if lo:
+                chips.append(badge("low-confidence · " + ", ".join(sorted({s['type'] for s in lo})), "warn"))
+            st.markdown("PHI lens: " + "".join(chips), unsafe_allow_html=True)
+        elif prompt_now and _NARRATIVE_CUES.search(prompt_now):
+            st.markdown("PHI lens: " + badge("narrative PHI cues — regex can't confirm (NLP gap)", "warn"), unsafe_allow_html=True)
+        elif prompt_now:
+            st.markdown("PHI lens: " + badge("no PHI patterns detected", "ok"), unsafe_allow_html=True)
 
-resp_slot = c_req.empty()
-pipe_slot = c_pipe.empty()
-aud_slot = c_aud.container()
+        b1, b2 = st.columns([2.6, 1])
+        with b1:
+            if st.button("Run Guardrails", type="primary", use_container_width=True):
+                st.session_state["do_run"] = True
+        with b2:
+            if st.button("Reset", use_container_width=True):
+                st.session_state["do_reset"] = True
+                st.rerun()
+
+        resp_slot = st.empty()
+
+# ── Policy Pipeline panel ───────────────────────────────────────
+with c_pipe:
+    with st.container(border=True, key="panel_pipe"):
+        _lr = st.session_state.last_run
+        if _lr:
+            _ok = _lr["outcome"] != "BLOCKED"
+            pipe_chip = badge(f"{_lr['outcome']} · {_lr['mode']}", "ok" if _ok else "deny")
+        else:
+            pipe_chip = badge("awaiting request", "mono")
+        st.markdown(
+            panel_head("⌁", "Policy Pipeline", sub="six controls · first block wins", chip=pipe_chip),
+            unsafe_allow_html=True,
+        )
+        pipe_slot = st.empty()
+
+# ── Audit & Disclosures panel ───────────────────────────────────
+with c_aud:
+    with st.container(border=True, key="panel_aud"):
+        _events = st.session_state.audit_events
+        st.markdown(
+            panel_head("⛓", "Audit & Disclosures", sub="§164.312(b) · HMAC hash chain",
+                       chip=badge(f"{len(_events)} events", "mono")),
+            unsafe_allow_html=True,
+        )
+        aud_slot = st.container()
 
 if st.session_state.pop("do_run", False):
     run_current(pipe_slot, resp_slot)
+    st.rerun()  # refresh panel headers, audit tiles and traffic with the new run's state
 
 run = st.session_state.last_run
 resp_slot.markdown(response_html(run), unsafe_allow_html=True)
@@ -1318,10 +1381,7 @@ with aud_slot:
         okn = sum(1 for e in events if e["outcome"] == "SUCCESS")
         denyn = sum(1 for e in events if e["outcome"] == "BLOCKED")
         warnn = sum(1 for e in events if e["outcome"] == "WARNING")
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Total", total)
-        m2.metric("Allowed", okn)
-        m3.metric("Denied", denyn)
+        st.markdown(tiles_html(total, okn, denyn), unsafe_allow_html=True)
         seg = ""
         if total:
             for n, c in ((okn, "var(--pass)"), (warnn, "var(--warn)"), (denyn, "var(--block)")):
