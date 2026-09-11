@@ -372,12 +372,18 @@ def run_deterministic(prompt: str, pipe_slot, resp_slot):
 
 def live_transcript_html(prog: dict) -> str:
     parts = [f'<div class="stagechip run"><span class="think"><i></i><i></i><i></i></span>{prog["stage"]}</div>']
-    for outcome, rule in prog["steer"]:
-        cls = "deny" if outcome == "BLOCKED" else "ok"
+    for i, (outcome, rule, tool) in enumerate(prog["steer"], 1):
         glyph = "✕" if outcome == "BLOCKED" else "✓"
+        color = "block" if outcome == "BLOCKED" else "pass"
         parts.append(f'<div class="pline done" style="padding:5px 0"><div class="ldot">{glyph}</div>'
-                     f'<div><div class="lname" style="color:var(--{ "block" if outcome == "BLOCKED" else "pass"})">{outcome}</div>'
+                     f'<div><div class="lname" style="color:var(--{color})"><span class="ttime">call {i}</span> '
+                     f'{outcome} · {tool or "tool"}</div>'
                      f'<div class="ldetail">{rule}</div></div></div>')
+    if prog["steer"]:
+        denied = sum(1 for o, _, _ in prog["steer"] if o == "BLOCKED")
+        allowed = len(prog["steer"]) - denied
+        parts.append(f'<div class="ldetail" style="color:var(--faint)">ledger: {denied} denied · {allowed} allowed '
+                     f'(the denial is the run verdict)</div>')
     if prog["text"]:
         tail = prog["text"][-720:]
         parts.append(f'<div class="livebox">{tail}</div>')
@@ -456,11 +462,12 @@ def run_live(prompt: str, pipe_slot, resp_slot):
                     draw()
             if len(steering.guardrail_events) > prog["ev"]:
                 for e in steering.guardrail_events[prog["ev"]:]:
-                    prog["steer"].append((e.get("outcome"), e.get("rule") or e.get("tool", "")))
+                    prog["steer"].append((e.get("outcome"), e.get("rule") or "", e.get("tool") or ""))
                 prog["ev"] = len(steering.guardrail_events)
                 last = steering.guardrail_events[-1]
                 suffix = f" — {last['rule']}" if last.get("rule") else ""
-                prog["stage"] = f"steering decision: {last['outcome']}{suffix}"
+                prog["stage"] = (f"steering call {len(prog['steer'])}: "
+                                 f"{last['outcome']}{suffix} · {last.get('tool') or 'tool'}")
                 draw()
             if "tool_result_message_added" in ev and prog["stage"] != "tool executed — composing answer":
                 prog["stage"] = "tool executed — composing answer"
@@ -516,6 +523,7 @@ def run_live(prompt: str, pipe_slot, resp_slot):
         "risk": det.phi.risk_score if det.phi else 0.0,
         "traffic_meta": ({"model": trec["model"], "latency_ms": trec.get("latency_ms"), "usage": trec.get("usage")}
                          if trec else None),
+        "steer_ledger": [(e.get("outcome"), e.get("rule") or "", e.get("tool") or "") for e in events],
         "overlay": None if events else "The model answered without calling a tool, so the steering handler never ran. "
                                         "This pipeline is a deterministic policy echo of the implied tool call.",
     }
@@ -713,11 +721,12 @@ def pipeline_html(view: dict) -> str:
     for (cid, label, status, detail) in view.get("steps", []):
         parts.append(f'<div class="pstep"><div class="pdot {status}">{GLYPH[status]}</div>'
                      f'<div><div class="pname {status}">{label}</div><div class="pdet">{detail}</div></div></div>')
-    for outcome, rule in view.get("steer_lines", []):
-        cls = "deny" if outcome == "BLOCKED" else "ok"
+    for i, item in enumerate(view.get("steer_lines", []), 1):
+        outcome, rule, tool = (list(item) + ["", ""])[:3]
         glyph = "✕" if outcome == "BLOCKED" else "✓"
         parts.append(f'<div class="pline done"><div class="ldot">{glyph}</div>'
-                     f'<div><div class="lname" style="color:var(--{"block" if outcome == "BLOCKED" else "pass"})">{outcome}</div>'
+                     f'<div><div class="lname" style="color:var(--{"block" if outcome == "BLOCKED" else "pass"})">'
+                     f'<span class="ttime">call {i}</span> {outcome} · {tool or "tool"}</div>'
                      f'<div class="ldetail">{rule}</div></div></div>')
     if view.get("outcome"):
         ok = view["outcome"] != "BLOCKED"
@@ -866,6 +875,21 @@ def response_html(run: dict) -> str:
     )
     if run["advisory"]:
         parts.append(f'<div class="adv">{run["advisory"]}</div>')
+    ledger = run.get("steer_ledger") or []
+    if ledger:
+        denied = sum(1 for o, _, _ in ledger if o == "BLOCKED")
+        allowed = len(ledger) - denied
+        chips = []
+        for i, (outcome, rule, tool) in enumerate(ledger, 1):
+            cls = "deny" if outcome == "BLOCKED" else "ok"
+            glyph = "✕" if outcome == "BLOCKED" else "✓"
+            chips.append(f'<span class="bdg {cls} mono" style="margin:3px 5px 0 0">{glyph} call {i} · {tool or "tool"}</span>')
+        parts.append('<div style="display:flex;flex-wrap:wrap;margin-top:9px">' + "".join(chips) + "</div>")
+        if denied and allowed:
+            parts.append(
+                '<div class="adv" style="color:var(--muted);background:var(--surface-2);border-color:var(--border)">'
+                f'{denied} of {len(ledger)} tool calls were denied — the verdict reflects the denial; '
+                'the model\'s compliant fallback call is what produced the response below.</div>')
     if run.get("risk") and run["risk"] > 0:
         r = run["risk"]
         cls, lbl = ("block", "HIGH RISK") if r >= .6 else (("warn", "MODERATE") if r >= .3 else ("pass", "LOW RISK"))
