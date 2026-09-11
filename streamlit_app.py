@@ -23,6 +23,7 @@ import datetime
 from dataclasses import asdict
 
 import streamlit as st
+import streamlit.components.v1 as components
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -370,24 +371,52 @@ def run_deterministic(prompt: str, pipe_slot, resp_slot):
     st.session_state.audit_events.insert(0, audit_event_from_result(result, "deterministic"))
 
 
-def live_transcript_html(prog: dict) -> str:
-    parts = [f'<div class="stagechip run"><span class="think"><i></i><i></i><i></i></span>{prog["stage"]}</div>']
+def live_terminal_html(prog: dict) -> str:
+    """
+    Self-contained streaming terminal for components.html: fixed height,
+    real-time text, call ledger header, and JS auto-scroll pinned to the
+    bottom on every re-render (Streamlit replaces the node each update,
+    so the scroll pin must live inside the iframe).
+    """
+    def esc(s: str) -> str:
+        return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    ledger = []
     for i, (outcome, rule, tool) in enumerate(prog["steer"], 1):
         glyph = "✕" if outcome == "BLOCKED" else "✓"
-        color = "block" if outcome == "BLOCKED" else "pass"
-        parts.append(f'<div class="pline done" style="padding:5px 0"><div class="ldot">{glyph}</div>'
-                     f'<div><div class="lname" style="color:var(--{color})"><span class="ttime">call {i}</span> '
-                     f'{outcome} · {tool or "tool"}</div>'
-                     f'<div class="ldetail">{rule}</div></div></div>')
-    if prog["steer"]:
-        denied = sum(1 for o, _, _ in prog["steer"] if o == "BLOCKED")
-        allowed = len(prog["steer"]) - denied
-        parts.append(f'<div class="ldetail" style="color:var(--faint)">ledger: {denied} denied · {allowed} allowed '
-                     f'(the denial is the run verdict)</div>')
-    if prog["text"]:
-        tail = prog["text"][-720:]
-        parts.append(f'<div class="livebox">{tail}</div>')
-    return '<div style="display:flex;flex-direction:column;gap:8px">' + "".join(parts) + "</div>"
+        cls = "deny" if outcome == "BLOCKED" else "ok"
+        ledger.append(
+            f'<div class="ln"><span class="g {cls}">{glyph}</span> <b>call {i}</b> {outcome} · {esc(tool or "tool")}'
+            f'<span class="dim"> — {esc(rule)}</span></div>'
+        )
+    denied = sum(1 for o, _, _ in prog["steer"] if o == "BLOCKED")
+    allowed = len(prog["steer"]) - denied
+    tally = f"{denied} denied · {allowed} allowed" if prog["steer"] else ""
+
+    return f"""<!doctype html><html><head><meta charset="utf-8"><style>
+    body{{margin:0;background:transparent;font-family:'IBM Plex Mono',Menlo,monospace}}
+    .term{{background:#0b110e;border:1px solid rgba(53,211,156,.28);border-radius:10px;height:296px;
+          overflow-y:auto;padding:10px 12px;font-size:11px;line-height:1.75;color:#c8d8cf}}
+    .hd{{display:flex;justify-content:space-between;gap:10px;position:sticky;top:-10px;background:#0b110e;
+        padding:4px 0 7px;border-bottom:1px solid rgba(53,211,156,.15);margin-bottom:7px}}
+    .stage{{color:#7fd6c2}} .tally{{color:#e0c76a;white-space:nowrap}} .dim{{color:#5b7a6b}}
+    .g{{font-weight:700}} .g.deny{{color:#ff8f85}} .g.ok{{color:#a8e063}}
+    .ln{{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+    .txt{{white-space:pre-wrap;word-break:break-word;color:#dbe9e1;margin-top:6px}}
+    .cur{{display:inline-block;width:7px;height:13px;background:#35d39c;vertical-align:-2px;animation:bl 1s steps(1) infinite}}
+    @keyframes bl{{50%{{opacity:0}}}}
+    .live{{color:#a8e063}} .live i{{display:inline-block;width:6px;height:6px;border-radius:50%;background:#a8e063;
+        margin-right:6px;animation:pl 1.1s infinite}}
+    @keyframes pl{{50%{{opacity:.25}}}}
+    </style></head><body>
+    <div class="term" id="t">
+      <div class="hd"><span class="live"><i></i><span class="stage">{esc(prog["stage"])}</span></span>
+      <span class="tally">{tally}</span></div>
+      {''.join(ledger)}
+      <div class="txt">{esc(prog["text"])}<span class="cur"></span></div>
+    </div>
+    <script>const t=document.getElementById('t');t.scrollTop=t.scrollHeight;</script>
+    </body></html>"""
 
 
 def run_live(prompt: str, pipe_slot, resp_slot):
@@ -422,7 +451,8 @@ def run_live(prompt: str, pipe_slot, resp_slot):
             "steer_lines": prog["steer"],
         }
         pipe_slot.markdown(pipeline_html(view), unsafe_allow_html=True)
-        resp_slot.markdown(live_transcript_html(prog), unsafe_allow_html=True)
+        with resp_slot:
+            components.html(live_terminal_html(prog), height=330)
 
     draw()
 
@@ -440,7 +470,7 @@ def run_live(prompt: str, pipe_slot, resp_slot):
                         prog["stage"] = "model streaming" if not prog["steer"] else "composing answer"
                     prog["text"] += d["text"]
                     prog["chunks"] += 1
-                    if prog["chunks"] % 6 == 0:
+                    if prog["chunks"] % 3 == 0:
                         draw()
             elif "result" in ev:
                 try:
