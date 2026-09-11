@@ -797,6 +797,9 @@ def effective_api_key() -> str:
             or os.environ.get("OPENROUTER_API_KEY", ""))
 
 
+ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+
+
 def key_source() -> str:
     if (st.session_state.get("runtime_api_key") or "").strip():
         return "session key (memory only)"
@@ -948,11 +951,13 @@ with st.sidebar:
     st.divider()
 
     with st.expander("API key · session credential", expanded=not effective_api_key()):
-        st.caption("Held in server memory for this session only — never written to disk, logs, exports, or the traffic terminal.")
+        st.caption("Session default: held in server memory only. Optionally persisted to the gitignored `.env` (0600) so it survives refresh — never logged, exported, or shown in the traffic terminal.")
         st.markdown(
             f'<div class="ae-kv"><span class="ae-k">source</span><span class="ae-v">{key_source()}</span></div>'
             f'<div class="ae-kv"><span class="ae-k">fingerprint</span><span class="ae-v">{key_fingerprint(effective_api_key())}</span></div>',
             unsafe_allow_html=True)
+        persist = st.checkbox("Persist to .env (survives refresh)", value=True, key="key_persist",
+                              help="Atomic write to the gitignored .env with 0600 permissions, saved as OPENCODE_API_KEY.")
         new_key = st.text_input("New key", type="password", key="key_input",
                                 placeholder="sk-…", label_visibility="collapsed",
                                 help="Paste an OpenCode (or OpenRouter) key. Validated against the endpoint before use.")
@@ -962,13 +967,24 @@ with st.sidebar:
                 ok, msg = validate_api_key(new_key.strip())
             if ok:
                 st.session_state.runtime_api_key = new_key.strip()
-                st.success(msg)
+                if persist:
+                    from app.config.env_file import save_env_var
+                    save_env_var(ENV_PATH, "OPENCODE_API_KEY", new_key.strip())
+                    st.success(f"{msg} · saved to .env (0600) — survives refresh")
+                else:
+                    st.success(f"{msg} · session memory only")
                 st.rerun()
             else:
                 st.error(msg)
         if kc2.button("Clear key", use_container_width=True, disabled=key_source() == "none"):
             st.session_state.runtime_api_key = ""
             st.rerun()
+        if key_source() == ".env · OPENCODE_API_KEY":
+            if st.button("Delete saved key from .env", use_container_width=True):
+                from app.config.env_file import remove_env_var
+                remove_env_var(ENV_PATH, "OPENCODE_API_KEY")
+                st.session_state.runtime_api_key = ""
+                st.rerun()
 
     has_key = bool(effective_api_key())
     mode = st.radio(
