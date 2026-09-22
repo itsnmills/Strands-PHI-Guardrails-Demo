@@ -1,0 +1,134 @@
+[
+  {
+    "probe_id": "T01",
+    "description": "Physician queries a standard-sensitivity patient for treatment",
+    "engine_expectation": "ALLOWED",
+    "engine_verdict": "ALLOWED",
+    "engine_rule": "",
+    "phi_risk_score": 0.0,
+    "jev_answer": {
+      "is_legitimate_probability": 0.86,
+      "triage_choice": "allow",
+      "phi_leakage_risk": 1.09,
+      "usage": {
+        "input_tokens": 536,
+        "output_tokens": 80,
+        "cost": 2.2512e-05
+      },
+      "provider": "TypeSafe",
+      "model_resolved": "typesafe/jev-1.13-20260917"
+    },
+    "latency_ms": 300.0,
+    "agreement": "YES"
+  },
+  {
+    "probe_id": "T02",
+    "description": "Billing staff sends a claim summary to an internal workflow",
+    "engine_expectation": "ALLOWED",
+    "engine_verdict": "BLOCKED",
+    "engine_rule": "Purpose-of-Use: Justification Required",
+    "phi_risk_score": 0.0,
+    "jev_answer": {
+      "is_legitimate_probability": 0.27,
+      "triage_choice": "escalate",
+      "phi_leakage_risk": 1.11,
+      "usage": {
+        "input_tokens": 543,
+        "output_tokens": 82,
+        "cost": 2.2806e-05
+      },
+      "provider": "TypeSafe",
+      "model_resolved": "typesafe/jev-1.13-20260917"
+    },
+    "latency_ms": 372.2,
+    "agreement": "YES"
+  },
+  {
+    "probe_id": "T03",
+    "description": "Nurse tries to view a restricted behavioral-health record without purpose justification",
+    "engine_expectation": "BLOCKED",
+    "engine_verdict": "BLOCKED",
+    "engine_rule": "Sensitivity Tier: Access Denied",
+    "phi_risk_score": 0.0,
+    "jev_answer": {
+      "is_legitimate_probability": 0.19,
+      "triage_choice": "escalate",
+      "phi_leakage_risk": 1.14,
+      "usage": {
+        "input_tokens": 539,
+        "output_tokens": 82,
+        "cost": 2.2638e-05
+      },
+      "provider": "TypeSafe",
+      "model_resolved": "typesafe/jev-1.13-20260917"
+    },
+    "latency_ms": 241.4,
+    "agreement": "YES"
+  },
+  {
+    "probe_id": "T04",
+    "description": "Researcher sends identifiable payload through email door to public LLM",
+    "engine_expectation": "BLOCKED",
+    "engine_verdict": "BLOCKED",
+    "engine_rule": "Purpose-of-Use: Justification Required",
+    "phi_risk_score": 0.0,
+    "jev_answer": {
+      "is_legitimate_probability": 0.15,
+      "triage_choice": "escalate",
+      "phi_leakage_risk": 0.84,
+      "usage": {
+        "input_tokens": 547,
+        "output_tokens": 82,
+        "cost": 2.2974e-05
+      },
+      "provider": "TypeSafe",
+      "model_resolved": "typesafe/jev-1.13-20260917"
+    },
+    "latency_ms": 248.4,
+    "agreement": "YES"
+  },
+  {
+    "probe_id": "T05",
+    "description": "Physician pastes a chart summary into a public LLM during a research workflow",
+    "engine_expectation": "BLOCKED",
+    "engine_verdict": "BLOCKED",
+    "engine_rule": "Purpose-of-Use Violation",
+    "phi_risk_score": 0.0,
+    "jev_answer": {
+      "is_legitimate_probability": 0.05,
+      "triage_choice": "escalate",
+      "phi_leakage_risk": 1.63,
+      "usage": {
+        "input_tokens": 541,
+        "output_tokens": 82,
+        "cost": 2.2722e-05
+      },
+      "provider": "TypeSafe",
+      "model_resolved": "typesafe/jev-1.13-20260917"
+    },
+    "latency_ms": 257.5,
+    "agreement": "YES"
+  },
+  {
+    "probe_id": "T06",
+    "description": "Nurse labels an ambiguous handoff summary payload (edge case)",
+    "engine_expectation": "ALLOWED",
+    "engine_verdict": "ALLOWED",
+    "engine_rule": "",
+    "phi_risk_score": 0.0,
+    "jev_answer": {
+      "is_legitimate_probability": 0.68,
+      "triage_choice": "allow",
+      "phi_leakage_risk": 0.95,
+      "usage": {
+        "input_tokens": 541,
+        "output_tokens": 80,
+        "cost": 2.2722e-05
+      },
+      "provider": "TypeSafe",
+      "model_resolved": "typesafe/jev-1.13-20260917"
+    },
+    "latency_ms": 235.6,
+    "agreement": "NO"
+  }
+]

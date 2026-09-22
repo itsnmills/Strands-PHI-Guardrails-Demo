@@ -15,11 +15,9 @@ instructions about what they can and cannot do.
 import os
 import uuid
 
-import litellm
 from strands import Agent
 from strands.models.litellm import LiteLLMModel
 
-from app.agent.traffic import TRAFFIC
 from app.guardrails.steering_handler import HIPAASteeringHandler
 
 
@@ -105,7 +103,8 @@ def create_agent(
     when provided, the steering layer gains behavioral minimum-necessary
     enforcement and the break-glass emergency path. `model` overrides the
     PHI_DEMO_MODEL environment default (both live on OpenCode Go).
-    `traffic_store` receives a full record of every LLM request/response.
+    `traffic_store` is retained for call compatibility; payload logging is
+    disabled so model traffic cannot retain patient text.
     `api_key` overrides the environment credential (session-supplied key —
     held in memory only).
     """
@@ -133,10 +132,6 @@ def create_agent(
             "extra_headers": go_headers,
         },
     )
-
-    # Full request/response visibility: every LLM call lands in the store
-    TRAFFIC.bind(traffic_store if traffic_store is not None else [])
-    litellm.callbacks = [TRAFFIC]
 
     steering = HIPAASteeringHandler(
         role=role,

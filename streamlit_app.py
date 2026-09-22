@@ -138,7 +138,9 @@ st.markdown(CSS, unsafe_allow_html=True)
 from app.guardrails.audit_logger import AuditLogger
 from app.guardrails.session_monitor import SessionMonitor
 from app.policies.break_glass import BreakGlassRegistry
+from app.agent.live_egress import is_approved_live_fixture
 from app.guardrails.policy_engine import evaluate, CONTROL_ORDER
+from app.jev.guardrails import make_adviser as make_jev_adviser
 from app.guardrails.phi_detector import detect_phi
 from app.policies.rbac import ROLE_DISPLAY, ROLE_DESCRIPTIONS, ROLE_POLICIES
 from app.policies.purpose_of_use import PURPOSE_DISPLAY, PURPOSE_DESCRIPTIONS, PURPOSE_POLICIES
@@ -357,6 +359,7 @@ def run_deterministic(prompt: str, pipe_slot, resp_slot):
         justification=st.session_state.justification,
         tool_name=inf["tool"], tool_inputs=det_inputs_for(inf, prompt),
         monitor=st.session_state.session_monitor, break_glass=st.session_state.break_glass,
+        adviser=make_jev_adviser(),
     )
     steps = [(c.control, c.label, c.status, c.detail) for c in result.steps]
     st.session_state.last_run = {
@@ -449,6 +452,37 @@ def run_live(prompt: str, pipe_slot, resp_slot):
     from app.agent.factory import create_agent
     logger: AuditLogger = st.session_state.audit_logger
     inf = infer_context(prompt)
+    if not is_approved_live_fixture(
+            prompt, st.session_state.get("active_scenario"), SCENARIOS):
+        note = (
+            "Live dispatch blocked before model setup: only an untouched built-in "
+            "synthetic scenario may be sent to the hosted model."
+        )
+        _live_fallback(prompt, pipe_slot, resp_slot, note)
+        st.session_state.last_run["prompt"] = "[unverified prompt omitted; live egress blocked]"
+        st.session_state.last_run["spans"] = []
+        st.session_state.last_run["redacted"] = None
+        st.session_state.last_run["response_text"] = None
+        if st.session_state.audit_events:
+            st.session_state.audit_events[0]["_res"] = None
+        return
+
+    model_label = (st.session_state.get("model_choice")
+                   or os.environ.get("PHI_DEMO_MODEL", "deepseek-v4.1-flash"))
+    traffic_record = {
+        "id": f"{st.session_state.run_count}-{time.monotonic_ns():x}",
+        "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%H:%M:%S"),
+        "model": model_label,
+        "status": "requesting",
+        "chunks": 0,
+        "usage": None,
+        "latency_ms": None,
+        "error_type": None,
+    }
+    st.session_state.traffic.append(traffic_record)
+    if len(st.session_state.traffic) > 40:
+        del st.session_state.traffic[:-40]
+    request_started = time.monotonic()
     try:
         agent, steering = create_agent(
             role=st.session_state.role, actor_id=st.session_state.actor_id,
@@ -457,12 +491,14 @@ def run_live(prompt: str, pipe_slot, resp_slot):
             session_monitor=st.session_state.session_monitor,
             break_glass=st.session_state.break_glass,
             model=st.session_state.get("model_choice"),
-            traffic_store=st.session_state.traffic,
             api_key=effective_api_key(),
         )
     except Exception as e:
-        _live_fallback(prompt, pipe_slot, None, f"Agent construction failed ({type(e).__name__}) — deterministic policy echo shown instead.")
-        return
+            _live_fallback(prompt, pipe_slot, None, f"Agent construction failed ({type(e).__name__}) — deterministic policy echo shown instead.")
+            traffic_record["status"] = "error"
+            traffic_record["error_type"] = type(e).__name__
+            traffic_record["latency_ms"] = round((time.monotonic() - request_started) * 1000, 1)
+            return
 
     prog = {"stage": "dispatching to model", "tool": None, "text": "", "steer": [], "ev": 0, "chunks": 0, "reasoning": 0}
 
@@ -505,6 +541,8 @@ def run_live(prompt: str, pipe_slot, resp_slot):
                         prog["stage"] = "composing answer" if prog["steer"] else "model streaming"
                     prog["text"] += d["text"]
                     prog["chunks"] += 1
+                    traffic_record["status"] = "streaming"
+                    traffic_record["chunks"] += 1
                     if prog["chunks"] % 3 == 0:
                         draw()
             elif ev.get("reasoningText"):
@@ -546,6 +584,9 @@ def run_live(prompt: str, pipe_slot, resp_slot):
     try:
         asyncio.run(consume())
     except Exception as e:
+        traffic_record["status"] = "error"
+        traffic_record["error_type"] = type(e).__name__
+        traffic_record["latency_ms"] = round((time.monotonic() - request_started) * 1000, 1)
         note = f"Live agent interrupted ({type(e).__name__}) — deterministic policy echo shown instead."
         if "usage limit" in str(e).lower() or "ratelimit" in type(e).__name__.lower():
             note = ("OpenCode Go usage limit reached — the live agent is paused until the weekly reset "
@@ -562,22 +603,14 @@ def run_live(prompt: str, pipe_slot, resp_slot):
         justification=st.session_state.justification,
         tool_name=tool_eff, tool_inputs=det_inputs_for(inf, prompt, tool_eff),
         monitor=st.session_state.session_monitor, break_glass=st.session_state.break_glass,
+        adviser=make_jev_adviser(),
     )
     outcome = "BLOCKED" if blocked else "ALLOWED"
-    # Seal any litellm records the stream hooks didn't finalize — strands may
-    # stop consuming the underlying stream once the result arrives, so the
-    # final call's success event can be missed. Strands' own result event
-    # supplies usage/duration as the authoritative source.
-    for rec in st.session_state.traffic:
-        if rec["status"] in ("requesting", "streaming"):
-            rec["status"] = "complete"
-            if not rec["stream_text"] and not rec["final_text"]:
-                rec["final_text"] = prog["text"].strip() or None
-            if rec.get("usage") is None and prog.get("usage"):
-                rec["usage"] = prog["usage"]
-            if rec.get("latency_ms") is None and prog.get("duration_ms"):
-                rec["latency_ms"] = round(prog["duration_ms"], 1)
-    trec = next((r for r in reversed(st.session_state.traffic) if r.get("status") == "complete"), None)
+    traffic_record["status"] = "complete"
+    traffic_record["usage"] = prog.get("usage")
+    traffic_record["latency_ms"] = round(
+        prog.get("duration_ms") or (time.monotonic() - request_started) * 1000, 1)
+    trec = traffic_record
     st.session_state.last_run = {
         "mode": "live", "result": None,
         "steps": [(c.control, c.label, c.status, c.detail) for c in det.steps],
@@ -615,6 +648,7 @@ def _live_fallback(prompt: str, pipe_slot, resp_slot, note: str):
         justification=st.session_state.justification,
         tool_name=inf["tool"], tool_inputs=det_inputs_for(inf, prompt),
         monitor=st.session_state.session_monitor, break_glass=st.session_state.break_glass,
+        adviser=make_jev_adviser(),
     )
     st.session_state.last_run = {
         "mode": "live", "result": None,
@@ -1473,7 +1507,7 @@ with aud_slot:
             st.caption(f"Showing 15 of {total} events — export for the full trail.")
     with tab_traffic:
         recs = st.session_state.traffic
-        st.caption("Everything sent to and received from the model — full-fidelity request messages, streaming chunks, usage and latency. No black box.")
+        st.caption("Payload-free operational metadata only. Prompts, responses, and reasoning are never recorded here.")
         lines = []
         for r in reversed(recs[-14:]):
             stl = r.get("status", "?")
@@ -1493,27 +1527,9 @@ with aud_slot:
         else:
             st.markdown('<div class="term"><div class="tl"><span class="tdir dim">▍</span>'
                         '<span class="ttime">waiting for the first live run…</span></div></div>', unsafe_allow_html=True)
-        for r in reversed(recs[-14:]):
-            head = f'{r["ts"]} · {r["model"]} · {r.get("status")}' + (
-                f" · {r['latency_ms']:.0f}ms" if r.get("latency_ms") is not None else "")
-            with st.expander(head, expanded=False):
-                st.caption("REQUEST — messages exactly as sent (system prompt, session context, tool intent)")
-                st.code(json.dumps(r["request_messages"], indent=2)[:9000], language="json")
-                if r.get("status") == "error":
-                    st.error(r.get("error") or "request failed")
-                else:
-                    if r.get("stream_reasoning"):
-                        with st.expander("reasoning stream", expanded=False):
-                            st.code(r["stream_reasoning"][:4000], language=None)
-                    text = r.get("stream_text") or r.get("final_text")
-                    if text:
-                        st.caption("RESPONSE — accumulated stream output")
-                        st.code(text[:6000], language=None)
-                    else:
-                        st.caption("no text content captured")
-                    if r.get("usage"):
-                        st.caption(f"usage · prompt {r['usage'].get('prompt')} / completion {r['usage'].get('completion')} "
-                                   f"/ total {r['usage'].get('total')} tokens · latency {r.get('latency_ms')} ms")
+        errors = [r.get("error_type") for r in recs[-14:] if r.get("status") == "error"]
+        if errors:
+            st.caption("Recent request failures: " + ", ".join(x or "RequestFailed" for x in errors))
 
 
 st.divider()

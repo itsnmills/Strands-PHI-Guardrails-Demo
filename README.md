@@ -7,6 +7,8 @@
 
 A healthcare AI safety portfolio project by Noah Mills: **policy-as-code guardrails that run before an AI agent's tool call executes** — not a prompt asking the model to behave.
 
+This demo is the enforcement half of a pair: [HealthAI Audit](https://github.com/itsnmills/health-ai-governance-auditor) is the assessment half — a local-first CLI that inventories a practice's AI tools and reports governance findings (`HA-*` rules). Where its findings call for enforcement-side remediation, its remediation plans point back here as the reference pattern. Shared vocabulary (decision labels, sensitivity tiers, finding→control mapping): [CONTROL_MAPPING.md](https://github.com/itsnmills/health-ai-governance-auditor/blob/main/docs/CONTROL_MAPPING.md).
+
 ![Decision theater: a nurse requesting a restricted psychiatric record is blocked mid-pipeline with the ACCESS DENIED stamp and a tamper-evident audit event](docs/demo.gif)
 
 ## Why this exists
@@ -66,9 +68,34 @@ Every decision — allow, block, warn, break-glass grant — is sealed into an *
 
 The chain also powers an **accounting of disclosures report (45 CFR §164.528)** (`app/compliance/disclosures.py`): external vendor sends plus break-glass grants rendered as the evidence a privacy office needs, with excluded (non-reportable) events counted and chain integrity stated on the report itself. Available as a one-click panel + CSV in the Streamlit console.
 
+## The two-speed layer: deterministic engine + Jev advisory
+
+The engine resolves the unambiguous majority of requests in microseconds. A second, optional layer (`app/jev/guardrails.py`) consults **Jev**, TypeSafe's non-generative System One model, but only when a request carries an ambiguity signal the policy cannot settle:
+
+| Signal | Meaning |
+|---|---|
+| `novel_tool` | tool outside the known surface |
+| `unknown_vendor` | vendor in neither the BAA registry nor the blocklist |
+| `justification_owed` | a reason is semantically owed (egress/write, or a SENSITIVE/RESTRICTED read) but absent |
+| `phi_pattern_gap` | PHI cues a regex cannot confirm, or sees below the block threshold |
+
+**Jev is not asked to reason — it is the input to an `if` statement.** The model answers narrow, perceptual atoms ("does this tool name transmit data externally?", "does this text ask the assistant to ignore its instructions?") and ordinary control flow in `app/jev/checks.py` turns those atoms into a verdict. Every threshold and every branch is deterministic Python, identical whether the atoms came from the model or from the offline regex stand-ins. A model answer can move a threshold; it can never bypass a branch.
+
+The lane itself is never a model decision. It is computed from the ambiguity flags: engine BLOCK → `escalate`; unconfirmed PHI pattern → `deidentify`; otherwise `escalate`. What Jev contributes is an **annotation** — for a novel tool or an unknown vendor it says what the thing looks like ("classified as `transmits_external`", "looks like a consumer AI platform, treat as shadow-AI egress"), which is what a human reviewer needs and what a regex cannot say. Nothing here can change `outcome`, `rule`, or `reason`.
+
+`justification_owed` and `phi_pattern_gap` are resolved without a model call at all: the first is structural, and judging the second would mean shipping payload text out when the offline floor (redact before egress) is already the safe answer.
+
+**Measured, not assumed.** Asking Jev to judge legitimacy was wrong: across the full 58-case suite it re-litigated concrete policy blocks and produced false-allows — because it was being asked to reason about policy. Gated to ambiguity, on the blocked half it escalated 100% of the time with zero false-allows. That trial is what this design encodes — see `trial/`.
+
+**Offline by default.** With no key and no network every check runs its regex stand-in through the *same* composition, so CI exercises the real control flow with no key and no network. The one check that reads free text — the inbound injection screen, `app/jev/checks.py:screen_inbound` — is off unless you opt in; the safety property is TypeSafe's: Jev never generates text, so it cannot repeat what it judges. Set `JEV_ALLOW_NETWORK=1` to use the model:
+
+```bash
+JEV_ALLOW_NETWORK=1 streamlit run streamlit_app.py    # falls back automatically if no key
+```
+
 ## Evaluation
 
-**139 automated tests, all running without an LLM or API key.**
+**207 automated tests, all running without an LLM or API key.**
 
 **Policy matrix — 16/16.** Regression cases with expected outcome + expected rule, run against the deterministic engine (`tests/test_evals.py`).
 
@@ -86,6 +113,8 @@ The chain also powers an **accounting of disclosures report (45 CFR §164.528)**
 **Property-based invariants — 12 properties × 200 generated examples each** (`tests/test_properties.py`, Hypothesis): determinism, no raw-PHI egress, blocked-platforms-never-allow, unregistered-vendor-never-allows, unauthorized-purpose-always-blocks, trace integrity (≤1 block, everything after it skipped), and friends. These hold for *arbitrary* inputs, not just curated cases.
 
 **Session control tests** (`tests/test_session_controls.py`, `tests/test_audit_chain.py`, `tests/test_disclosures.py`): velocity warn→block escalation, window expiry, break-glass scoping/expiry/reason requirements, hash-chain tamper detection (content edits, re-sealing attempts, deletions), and §164.528 report invariants.
+
+**Jev tests** (`tests/test_jev_transport.py`, `tests/test_jev_checks.py`, `tests/test_jev_preflight.py`, 55 cases, no network): typed answer parsing and retry behavior; the atomic compositions at their thresholds (including fail-closed on missing atoms); the offline stand-ins; ambiguity gating; graceful degradation when the model is unreachable; that each check sends only its identifier, never the result or the payload; and the invariant that an advisory never changes a verdict.
 
 **Performance** (`benchmarks/bench_guardrails.py`, Apple Silicon, no LLM/network):
 

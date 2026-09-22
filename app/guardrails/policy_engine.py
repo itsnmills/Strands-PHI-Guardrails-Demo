@@ -14,7 +14,7 @@ which keeps the demo free to run and the tests free of API credentials.
 
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from app.guardrails.phi_detector import detect_phi, should_block
 from app.guardrails.session_monitor import SessionMonitor
@@ -64,13 +64,16 @@ class PolicyResult:
     phi: Any = None               # DetectionResult when a payload was scanned
     patient_id: str | None = None
     vendor_id: str | None = None
+    justification: str = ""       # retained so an adviser can judge if one was owed
+    phi_narrative_cues: bool = False   # regex-blind narrative PHI cues (birth/address)
+    preflight: Any = None         # PreflightAdvisory from an optional adviser hook
 
     @property
     def steps(self) -> list[ControlStep]:
         return [self.trace[cid] for cid, _ in CONTROL_ORDER]
 
 
-def evaluate(
+def _run_checks(
     role: str,
     purpose: str,
     justification: str,
@@ -94,9 +97,11 @@ def evaluate(
     payload = tool_inputs.get("data", "") if isinstance(tool_inputs.get("data"), str) else tool_inputs.get("note", "")
     if not isinstance(payload, str):
         payload = ""
+    narrative_cues = bool(_NARRATIVE_CUES.search(payload))
 
     result = PolicyResult(tool=tool_name, role=role, purpose=purpose, outcome="ALLOWED",
-                          trace=trace, patient_id=patient_id, vendor_id=vendor_id)
+                          trace=trace, patient_id=patient_id, vendor_id=vendor_id,
+                          justification=justification, phi_narrative_cues=narrative_cues)
 
     def finish(r: PolicyResult, status: str, ctrl: str, detail: str, rule: str, reason: str) -> PolicyResult:
         trace[ctrl] = ControlStep(control=ctrl, label=trace[ctrl].label, status=status, detail=detail)
@@ -218,10 +223,10 @@ def evaluate(
         if detection.phi_found:
             trace["phi"] = ControlStep("phi", trace["phi"].label, "warn",
                                        f"Low-confidence pattern noted ({', '.join(detection.all_types)}) — below block threshold")
-            if _NARRATIVE_CUES.search(payload):
+            if narrative_cues:
                 result.advisory = ("Payload also contains narrative PHI cues (date of birth, address) that regex cannot confirm. "
                                    "In production an NER layer (AWS Comprehend Medical, Presidio) would flag this payload.")
-        elif _NARRATIVE_CUES.search(payload):
+        elif narrative_cues:
             trace["phi"] = ControlStep("phi", trace["phi"].label, "warn", "Narrative birth/address cues detected — no regex match")
             result.advisory = ("Payload contains narrative PHI cues that regex cannot confirm. "
                                "In production an NER layer (AWS Comprehend Medical, Presidio) would flag this payload.")
@@ -269,4 +274,42 @@ def evaluate(
             else:
                 trace["minnec"].detail = f"{trace['minnec'].detail} — {velocity_msg}"
 
+    return result
+
+
+def evaluate(
+    role: str,
+    purpose: str,
+    justification: str,
+    tool_name: str,
+    tool_inputs: dict[str, Any],
+    *,
+    monitor: "SessionMonitor | None" = None,
+    break_glass: "BreakGlassRegistry | None" = None,
+    adviser: "Callable[[PolicyResult], Any] | None" = None,
+) -> PolicyResult:
+    """Run the six deterministic controls, then optionally attach an advisory.
+
+    Identical to `_run_checks` when `adviser` is None. When provided, the
+    adviser (e.g. `app.jev.guardrails.make_adviser`) is called with the
+    finished result and may attach a second opinion to `result.preflight`.
+    It is invoked on every path, including blocks, and can never change
+    outcome/rule/reason.
+    """
+    result = _run_checks(
+        role=role,
+        purpose=purpose,
+        justification=justification,
+        tool_name=tool_name,
+        tool_inputs=tool_inputs,
+        monitor=monitor,
+        break_glass=break_glass,
+    )
+    if adviser is not None:
+        result.preflight = adviser(result)
+        summary = getattr(result.preflight, "summary", None)
+        if callable(summary):
+            text = summary()
+            if text and result.advisory is None:
+                result.advisory = text
     return result

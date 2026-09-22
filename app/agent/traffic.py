@@ -1,24 +1,9 @@
-"""
-app/agent/traffic.py
-────────────────────
-Full model traffic recorder — everything sent to and received from the LLM.
+"""Payload-free model-call metadata recorder.
 
-Wired as a LiteLLM CustomLogger: every call the agent makes (request
-messages, streaming chunks, usage, latency, failures) lands as a
-structured record in the live console's traffic terminal.
-
-Design notes:
-  - One recorder instance, store swapped per run (`bind`) so each Streamlit
-    session/rerun owns its list
-  - Streaming: per-chunk hooks accumulate delta text (content + reasoning);
-    the final success event seals usage and round-trip latency
-  - Request fidelity: messages are stored exactly as sent (system prompt,
-    history, tool context) — the point of the terminal is "no black box"
-  - Hook signatures match this litellm version's calling convention
-    (kwargs, response_obj, start_time, end_time passed as named kwargs)
+Never retain request messages, response text, reasoning, or exception text:
+they may contain patient data.
 """
 
-import copy
 import datetime
 import uuid
 
@@ -51,20 +36,16 @@ class TrafficRecorder(CustomLogger):
         rec = {
             "id": (details.get("litellm_call_id") or str(uuid.uuid4()))[:8],
             "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%H:%M:%S"),
-            "model": model,
+            "model": str(model)[:100],
             "status": "requesting",
-            "request_messages": copy.deepcopy(messages) if messages else [],
             "request_params": {
                 k: details.get(k) for k in ("temperature", "max_tokens", "stream", "num_retries")
                 if details.get(k) is not None
             },
-            "stream_text": "",
-            "stream_reasoning": "",
             "chunks": 0,
             "usage": None,
             "latency_ms": None,
-            "final_text": None,
-            "error": None,
+            "error_type": None,
         }
         self.store.append(rec)
         self._pending[rec["id"]] = rec
@@ -84,11 +65,6 @@ class TrafficRecorder(CustomLogger):
         if rec is None:
             return
         try:
-            delta = chunk.choices[0].delta
-            rec["stream_text"] += (delta.content or "") if delta else ""
-            if delta:
-                reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None) or ""
-                rec["stream_reasoning"] += reasoning
             rec["chunks"] += 1
             rec["status"] = "streaming"
         except Exception:
@@ -117,17 +93,9 @@ class TrafficRecorder(CustomLogger):
         if failed:
             rec["status"] = "error"
             exc = details.get("exception") or details.get("original_exception")
-            rec["error"] = f"{type(exc).__name__}: {exc}" if exc else "request failed"
+            rec["error_type"] = type(exc).__name__ if exc else "RequestFailed"
         else:
             rec["status"] = "complete"
-            if not rec["stream_text"]:
-                try:
-                    rec["final_text"] = response_obj.choices[0].message.content
-                except Exception:
-                    try:
-                        rec["final_text"] = response_obj.choices[0].delta.content
-                    except Exception:
-                        rec["final_text"] = None
         self._pending.pop(rec["id"], None)
         if len(self.store) > 40:
             del self.store[:len(self.store) - 40]
@@ -173,7 +141,7 @@ class TrafficRecorder(CustomLogger):
             rec = self._append(details.get("model", "?"), [], details)
         rec["status"] = "error"
         exc = details.get("exception") or details.get("original_exception")
-        rec["error"] = f"{type(exc).__name__}: {exc}" if exc else "request failed"
+        rec["error_type"] = type(exc).__name__ if exc else "RequestFailed"
         rec["latency_ms"] = _delta_ms(start, end)
         self._pending.pop(rec["id"], None)
         if len(self.store) > 40:
