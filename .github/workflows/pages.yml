@@ -3,7 +3,14 @@ name: Pages
 on:
   push:
     branches: [main]
-    paths: ["demo-ui.html", "screenshot-ui-v3.jpg", "docs/demo.gif", ".github/workflows/pages.yml"]
+    paths:
+      - "demo-ui.html"
+      - "docs/control-path.svg"
+      - "docs/demo.gif"
+      - "docs/readme-visuals/**"
+      - "scripts/generate_readme_visuals.py"
+      - "scripts/render_svg_to_png.swift"
+      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
@@ -29,8 +36,8 @@ jobs:
         run: |
           mkdir -p _site
           cp demo-ui.html _site/index.html
-          cp screenshot-ui-v3.jpg _site/
-          cp docs/demo.gif _site/ 2>/dev/null || true
+          cp docs/control-path.svg _site/
+          cp docs/demo.gif _site/
 
       - name: Setup Pages
         uses: actions/configure-pages@v5

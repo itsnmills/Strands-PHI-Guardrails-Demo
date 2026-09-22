@@ -9,7 +9,9 @@ A healthcare AI safety portfolio project by Noah Mills: **policy-as-code guardra
 
 This demo is the enforcement half of a pair: [HealthAI Audit](https://github.com/itsnmills/health-ai-governance-auditor) is the assessment half — a local-first CLI that inventories a practice's AI tools and reports governance findings (`HA-*` rules). Where its findings call for enforcement-side remediation, its remediation plans point back here as the reference pattern. Shared vocabulary (decision labels, sensitivity tiers, finding→control mapping): [CONTROL_MAPPING.md](https://github.com/itsnmills/health-ai-governance-auditor/blob/main/docs/CONTROL_MAPPING.md).
 
-![Decision theater: a nurse requesting a restricted psychiatric record is blocked mid-pipeline with the ACCESS DENIED stamp and a tamper-evident audit event](docs/demo.gif)
+The GIF walks through a synthetic request blocked before tool execution, its audit event, and a separate unknown-vendor case where Jev adds context without changing the decision.
+
+![Four-frame synthetic-data walkthrough of pre-tool enforcement, a sensitivity-tier block, audit evidence, and a Jev annotation that cannot override policy](docs/demo.gif)
 
 ## Why this exists
 
@@ -19,17 +21,7 @@ A nurse attempting to open a restricted psychiatric record is blocked mid-pipeli
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    U[User request] --> A[Strands Agent<br/>role-scoped, tool-forward prompt]
-    A -->|tool call requested| S[SteeringHandler<br/>pre-tool enforcement]
-    S --> C{Control hierarchy<br/>6 deterministic checks}
-    C -->|allowed| T[Clinical tools<br/>records · vendors · notes]
-    C -->|blocked| G[Guide back to model<br/>reason verbatim]
-    S --> AL[(Hash-chained<br/>audit log)]
-    SM[Session velocity monitor] --> S
-    BG[Break-glass registry] --> S
-```
+![System map of the six deterministic checks, allow and block paths, HMAC audit chain, session velocity controls, scoped break-glass access, and bounded Jev advisory](docs/control-path.svg)
 
 The same six-control hierarchy exists twice, deliberately:
 
