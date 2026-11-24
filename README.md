@@ -3,52 +3,52 @@
 [![CI](https://github.com/itsnmills/Strands-PHI-Guardrails-Demo/actions/workflows/ci.yml/badge.svg)](https://github.com/itsnmills/Strands-PHI-Guardrails-Demo/actions/workflows/ci.yml)
 [![pages](https://github.com/itsnmills/Strands-PHI-Guardrails-Demo/actions/workflows/pages.yml/badge.svg)](https://github.com/itsnmills/Strands-PHI-Guardrails-Demo/actions/workflows/pages.yml)
 
-**Live demo:** [itsnmills.github.io/Strands-PHI-Guardrails-Demo](https://itsnmills.github.io/Strands-PHI-Guardrails-Demo/) — no install, no data leaves your browser.
+**Live demo:** [itsnmills.github.io/Strands-PHI-Guardrails-Demo](https://itsnmills.github.io/Strands-PHI-Guardrails-Demo/). It runs entirely in the browser, and all the data is synthetic.
 
-A healthcare AI safety portfolio project by Noah Mills: **policy-as-code guardrails that run before an AI agent's tool call executes** — not a prompt asking the model to behave.
+This is a demo of access controls for an AI agent working with patient data. Before the agent
+can call a tool (look up a record, write a note, send something to a vendor), the request goes
+through a set of policy checks written in ordinary Python. If a check fails, the tool call
+doesn't happen, and the decision is written to an audit log.
 
-This demo is the enforcement half of a pair: [HealthAI Audit](https://github.com/itsnmills/health-ai-governance-auditor) is the assessment half — a local-first CLI that inventories a practice's AI tools and reports governance findings (`HA-*` rules). Where its findings call for enforcement-side remediation, its remediation plans point back here as the reference pattern. Shared vocabulary (decision labels, sensitivity tiers, finding→control mapping): [CONTROL_MAPPING.md](https://github.com/itsnmills/health-ai-governance-auditor/blob/main/docs/CONTROL_MAPPING.md).
+The point is that the rules live in code, not in the system prompt. A prompt that tells the
+model "don't share PHI" can be talked around. A check that looks at the user's role, the
+patient record, and the destination before anything executes can't be, because it never
+reads the prompt.
 
-The GIF walks through a synthetic request blocked before tool execution, its audit event, and a separate unknown-vendor case where Jev adds context without changing the decision.
+![Walkthrough: a request blocked before the tool runs, the resulting audit event, and an unknown-vendor case](docs/demo.gif)
 
-![Four-frame synthetic-data walkthrough of pre-tool enforcement, a sensitivity-tier block, audit evidence, and a Jev annotation that cannot override policy](docs/demo.gif)
+## What it checks
 
-## Why this exists
+Every tool call goes through six checks in order. The first one that fails stops the request,
+and the trace shows which check it was and why.
 
-"Please don't leak PHI" is not a control. LLM safety that lives in the system prompt fails exactly when it matters — under prompt injection, role confusion, or a model that decides to be helpful. The thesis here: **sensitive healthcare workflows need deterministic gates between the model and the data**, and those gates should be visible, testable code — not a buried instruction.
+| # | Check | Example of a block | Code |
+|---|-------|--------------------|------|
+| 1 | Role-based access | IT admin has no PHI access; billing can't write clinical notes; nurses can't send to vendors | `app/policies/rbac.py` |
+| 2 | Purpose of use | A researcher can't claim "treatment"; research access needs a written IRB justification | `app/policies/purpose_of_use.py` |
+| 3 | Record sensitivity | Records are tagged standard, sensitive (substance use, 42 CFR Part 2), or restricted (psychiatric), and each role has its own limits | `app/data/patients.py` |
+| 4 | BAA status | The vendor must match a registry of vendors with a signed BAA exactly. Typos, case changes, and subdomains fail. Consumer AI platforms are always blocked | `app/data/vendors.py` |
+| 5 | PHI in outbound data | Pattern matching for SSNs, MRNs, DOBs, phone numbers, addresses, and so on. High-risk payloads to outside vendors are blocked | `app/guardrails/phi_detector.py` |
+| 6 | Minimum necessary | Limits how much one request can pull, plus a per-session rate limit. A nurse pulling six records in quick succession gets stopped | `app/guardrails/session_monitor.py` |
 
-A nurse attempting to open a restricted psychiatric record is blocked mid-pipeline. A physician with a treatment purpose proceeds. A raw SSN headed to an AI vendor is caught and logged. Prompt injection that says "ignore your instructions" changes nothing, because the policy decision never reads the prompt — it reads the session context and the structured tool call.
+![Control path diagram](docs/control-path.svg)
 
-## Architecture
+The same checks are implemented twice:
 
-![System map of the six deterministic checks, allow and block paths, HMAC audit chain, session velocity controls, scoped break-glass access, and bounded Jev advisory](docs/control-path.svg)
+- `app/guardrails/policy_engine.py` is the plain version, with no dependencies and no LLM. The tests, benchmarks, and offline mode use it.
+- `app/guardrails/steering_handler.py` wraps the same checks as a Strands `SteeringHandler`, so the live agent hits them before every tool call.
 
-The same six-control hierarchy exists twice, deliberately:
+### Session controls
 
-- **`app/guardrails/policy_engine.py`** — deterministic, dependency-free. Runs the 16-case matrix, the red-team suite, the property tests, and the fallback mode. No LLM needed, so evaluation is free and CI-safe.
-- **`app/guardrails/steering_handler.py`** — the same checks as a Strands `SteeringHandler`, intercepting every tool call on the live-agent path before execution.
+- **Rate limiting per session.** A rolling 5-minute window warns when a user hits their record budget and blocks at twice the budget. This catches chart browsing and bulk pulls that look fine one request at a time.
+- **Break-glass access.** This is the emergency override. It covers one patient and one role, requires a written reason of at least 20 characters, expires after 15 minutes, and logs a flagged event for review afterward.
 
-## The control hierarchy
+### Audit log
 
-| # | Control | Example block | Source |
-|---|---------|---------------|--------|
-| 1 | **RBAC** | IT admin has zero PHI access; billing cannot write clinical notes; nurses cannot transmit to vendors | `app/policies/rbac.py` |
-| 2 | **Purpose-of-use** | Researcher can't claim TREATMENT; RESEARCH requires a written IRB justification | `app/policies/purpose_of_use.py` |
-| 3 | **Sensitivity tiers** | STANDARD / SENSITIVE (substance use) / RESTRICTED (psychiatric) — per-role scope, 42 CFR Part 2 aware | `app/data/patients.py` |
-| 4 | **BAA registry** | Exact-match vendor registry; typo-squats, case variants, and subdomains fail closed; consumer platforms blocked outright | `app/data/vendors.py` |
-| 5 | **PHI content scan** | 16 pattern families with confidence weights; risk ≥ 0.60 blocks outbound payloads; narrative-cue advisories for regex blind spots | `app/guardrails/phi_detector.py` |
-| 6 | **Minimum necessary** | Single-request scope **plus session velocity** — 6 rapid record pulls by a nurse trip the behavioral budget | `app/guardrails/session_monitor.py` |
-
-First block wins; downstream checks are skipped and the trace shows exactly where and why.
-
-### Session-level controls (state, not just single requests)
-
-- **Session velocity monitor** — rolling 5-minute window per session: warn at budget, block at 2×. Catches chart-snooping and bulk-exfiltration patterns a single-request check can never see.
-- **Break-glass emergency access** — the controlled exception path: scoped to one patient + one role, requires a ≥20-char justification (the reason *is* the audit trail), expires in 15 minutes, every grant is a flagged `BREAK_GLASS` audit event queued for mandatory post-hoc review (§164.528 accounting of disclosures).
-
-### Tamper-evident audit logging
-
-Every decision — allow, block, warn, break-glass grant — is sealed into an **HMAC-SHA256 hash chain** (`app/guardrails/audit_logger.py`): each event carries its predecessor's hash plus an HMAC over its canonical contents. Modify, delete, or reorder history and `verify_chain()` reports the first broken link. Production notes: append-only WORM storage and a KMS-held key, but the chain design is the real thing.
+Every decision (allow, block, warn, break-glass) is written to a hash-chained log
+(`app/guardrails/audit_logger.py`). Each entry includes the previous entry's hash and an
+HMAC-SHA256 over its own contents. If anyone edits, deletes, or reorders an entry,
+`verify_chain()` reports where the chain breaks.
 
 ```json
 {
@@ -58,117 +58,109 @@ Every decision — allow, block, warn, break-glass grant — is sealed into an *
 }
 ```
 
-The chain also powers an **accounting of disclosures report (45 CFR §164.528)** (`app/compliance/disclosures.py`): external vendor sends plus break-glass grants rendered as the evidence a privacy office needs, with excluded (non-reportable) events counted and chain integrity stated on the report itself. Available as a one-click panel + CSV in the Streamlit console.
+The log also feeds an accounting-of-disclosures report (45 CFR §164.528) in
+`app/compliance/disclosures.py`. It lists external vendor sends and break-glass grants, and
+it's available as a panel and a CSV export in the Streamlit app.
 
-## The two-speed layer: deterministic engine + Jev advisory
+In this demo the key is held in memory and the log only lasts for the session. A real
+deployment would keep the key in a KMS or HSM and write the log to append-only storage.
 
-The engine resolves the unambiguous majority of requests in microseconds. A second, optional layer (`app/jev/guardrails.py`) consults **Jev**, TypeSafe's non-generative System One model, but only when a request carries an ambiguity signal the policy cannot settle:
+## Optional model-based review (Jev)
 
-| Signal | Meaning |
-|---|---|
-| `novel_tool` | tool outside the known surface |
-| `unknown_vendor` | vendor in neither the BAA registry nor the blocklist |
-| `justification_owed` | a reason is semantically owed (egress/write, or a SENSITIVE/RESTRICTED read) but absent |
-| `phi_pattern_gap` | PHI cues a regex cannot confirm, or sees below the block threshold |
+The checks above are deterministic, and they settle almost every request. A few cases are
+ambiguous: a tool name the policy doesn't recognize, a vendor that's in neither the approved
+list nor the blocklist, or text that might contain PHI the patterns can't confirm. For those,
+`app/jev/` can ask Jev, a small classification model from TypeSafe, narrow yes/no questions
+such as "does this tool send data externally?"
 
-**Jev is not asked to reason — it is the input to an `if` statement.** The model answers narrow, perceptual atoms ("does this tool name transmit data externally?", "does this text ask the assistant to ignore its instructions?") and ordinary control flow in `app/jev/checks.py` turns those atoms into a verdict. Every threshold and every branch is deterministic Python, identical whether the atoms came from the model or from the offline regex stand-ins. A model answer can move a threshold; it can never bypass a branch.
+The model's answer is only used to **annotate** the decision for a human reviewer. It can't
+change the outcome. Whether a request is allowed or blocked is always decided by the Python
+checks.
 
-The lane itself is never a model decision. It is computed from the ambiguity flags: engine BLOCK → `escalate`; unconfirmed PHI pattern → `deidentify`; otherwise `escalate`. What Jev contributes is an **annotation** — for a novel tool or an unknown vendor it says what the thing looks like ("classified as `transmits_external`", "looks like a consumer AI platform, treat as shadow-AI egress"), which is what a human reviewer needs and what a regex cannot say. Nothing here can change `outcome`, `rule`, or `reason`.
+This design came out of testing. When the model was asked to judge whether requests were
+legitimate, it second-guessed clear policy blocks and let some through. When it was limited
+to the ambiguous cases, it escalated every blocked request and allowed none. The trial
+scripts and results are in `trial/`.
 
-`justification_owed` and `phi_pattern_gap` are resolved without a model call at all: the first is structural, and judging the second would mean shipping payload text out when the offline floor (redact before egress) is already the safe answer.
-
-**Measured, not assumed.** Asking Jev to judge legitimacy was wrong: across the full 58-case suite it re-litigated concrete policy blocks and produced false-allows — because it was being asked to reason about policy. Gated to ambiguity, on the blocked half it escalated 100% of the time with zero false-allows. That trial is what this design encodes — see `trial/`.
-
-**Offline by default.** With no key and no network every check runs its regex stand-in through the *same* composition, so CI exercises the real control flow with no key and no network. The one check that reads free text — the inbound injection screen, `app/jev/checks.py:screen_inbound` — is off unless you opt in; the safety property is TypeSafe's: Jev never generates text, so it cannot repeat what it judges. Set `JEV_ALLOW_NETWORK=1` to use the model:
+Jev is off by default. Without network access, each check falls back to a regex version that
+feeds the same logic, so CI runs the real code paths without a key. To turn it on:
 
 ```bash
-JEV_ALLOW_NETWORK=1 streamlit run streamlit_app.py    # falls back automatically if no key
+JEV_ALLOW_NETWORK=1 streamlit run streamlit_app.py
 ```
 
-## Evaluation
+## Testing
 
-**207 automated tests, all running without an LLM or API key.**
-
-**Policy matrix — 16/16.** Regression cases with expected outcome + expected rule, run against the deterministic engine (`tests/test_evals.py`).
-
-**Prompt-injection red-team suite — 42 adversarial cases, 0% bypass** (`app/evals/redteam_cases.py`, `tests/test_redteam.py`):
-
-| Attack class | Cases | Result |
-|---|---|---|
-| **Policy bypass** (vendor impersonation, case/trailing-space/subdomain tricks, purpose laundering, justification stuffing, tier escalation, raw SSN/contact/address exfiltration) | 19 | **0/19 succeeded** — every attempt blocked with the intended rule |
-| **Prompt injection** (instruction override, fake system messages, DAN personas, authority forgery, emotional manipulation) | 12 | 5 blocked (the underlying call violated policy); 7 produced no change — hostile prompt + clean call = allowed, proving enforcement never reads the prompt |
-| **Detection gaps** (base64/hex-encoded SSNs, separator variants, leetspeak, spelled-out DOB/address) | 10 | Documented honestly as regex gaps — the E015-class problem regex-only detection can't solve; production fix is an NER layer (Comprehend Medical / Presidio) |
-| **Closed gaps** (label-reordered DOB, normalized platform casing) | 2* | Former gaps the red-team pass surfaced and the engine now catches — kept as regression tests (`CLOSED_GAP`); if one ever passes again, the suite fails |
-
-*RT-042 via a pattern fix; RT-013's rule-mismatch finding (casing escaped one blocklist but landed in another) via normalized blocked-platform matching. The fix loop is the point: red team finds → engine hardens → regression retained.
-
-**Property-based invariants — 12 properties × 200 generated examples each** (`tests/test_properties.py`, Hypothesis): determinism, no raw-PHI egress, blocked-platforms-never-allow, unregistered-vendor-never-allows, unauthorized-purpose-always-blocks, trace integrity (≤1 block, everything after it skipped), and friends. These hold for *arbitrary* inputs, not just curated cases.
-
-**Session control tests** (`tests/test_session_controls.py`, `tests/test_audit_chain.py`, `tests/test_disclosures.py`): velocity warn→block escalation, window expiry, break-glass scoping/expiry/reason requirements, hash-chain tamper detection (content edits, re-sealing attempts, deletions), and §164.528 report invariants.
-
-**Jev tests** (`tests/test_jev_transport.py`, `tests/test_jev_checks.py`, `tests/test_jev_preflight.py`, 55 cases, no network): typed answer parsing and retry behavior; the atomic compositions at their thresholds (including fail-closed on missing atoms); the offline stand-ins; ambiguity gating; graceful degradation when the model is unreachable; that each check sends only its identifier, never the result or the payload; and the invariant that an advisory never changes a verdict.
-
-**Performance** (`benchmarks/bench_guardrails.py`, Apple Silicon, no LLM/network):
-
-| Measurement | p50 | p99 |
-|---|---|---|
-| Six-control engine evaluation | 2.9 µs | 18.4 µs |
-| Engine + velocity monitor + break-glass state | 4.5 µs | 23.8 µs |
-| PHI scan (16 pattern families) | 6–15 µs | ≤ 20 µs |
-| Chained audit event seal (HMAC) | 10.3 µs | 14.5 µs |
-| **Live-agent pre-tool round-trip** (steering handler, incl. asyncio) | **32.8 µs** | **65.3 µs** |
-
-Enforcement adds microseconds before a tool call — the guardrails are effectively free next to any model round-trip. (Full-chain verification is linear: ~33 ms for a 5,000-event chain.)
-
-## Running it
-
-**Static console** (what's deployed above): open [`demo-ui.html`](demo-ui.html) or `python3 -m http.server 4173`. Client-side re-implementation of the same six-control engine with the policy matrix, PHI lens, redaction previews, exportable audit trail, and deep links (`demo-ui.html?theme=dark&run=B2` loads and runs a scenario directly). Responsive down to phone sizes.
-
-**Live agent console:**
+210 tests, all of which run without an LLM or API key:
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env        # set OPENCODE_API_KEY (or OPENROUTER_API_KEY)
+python -m pytest -q tests
+```
+
+- **Policy cases** (`tests/test_evals.py`): 16 scenarios, each with an expected outcome and an expected rule.
+- **Red team** (`tests/test_redteam.py`, `app/evals/redteam_cases.py`): 42 adversarial cases.
+  - None of the 19 policy-bypass attempts got through (vendor name tricks, faked purpose of use, raw SSNs in outbound data, and so on).
+  - Of the 12 prompt-injection cases, 5 were blocked because the underlying request broke policy. The other 7 made no difference, because the checks never read the prompt.
+  - 10 cases are known gaps: encoded or obfuscated PHI (base64 SSNs, leetspeak, spelled-out dates) that regex can't catch. They're kept in the suite so the gaps stay visible.
+  - 2 cases are former gaps that have since been fixed. They're kept as regression tests.
+- **Property tests** (`tests/test_properties.py`, Hypothesis): 12 invariants, each checked against 200 generated inputs. Examples: decisions are deterministic, raw PHI never leaves, and unregistered vendors are never allowed.
+- **Session, audit, and disclosure tests**: rate-limit escalation, break-glass scope and expiry, tamper detection on the audit chain, and the disclosure report.
+- **Jev tests**: response parsing, fallback when the model is unreachable, that only identifiers are sent (never the payload), and that a model response never changes a decision.
+
+### Performance
+
+From `benchmarks/bench_guardrails.py` on Apple Silicon, with no LLM or network:
+
+| Measurement | p50 | p99 |
+|---|---|---|
+| Six-check evaluation | 2.9 µs | 23.2 µs |
+| Including rate limit and break-glass state | 4.5 µs | 23.8 µs |
+| PHI scan | 6–15 µs | ≤ 20 µs |
+| Writing one audit entry | 10.3 µs | 14.5 µs |
+| Full pre-tool check on the live agent | 32.8 µs | 65.3 µs |
+
+The checks add microseconds to each tool call, which is negligible next to a model call.
+Verifying a 5,000-entry audit chain takes about 33 ms.
+
+## Running it
+
+**Browser version.** Open [`demo-ui.html`](demo-ui.html) directly, or serve the folder with
+`python3 -m http.server 4173`. This is the version hosted on GitHub Pages. It's a JavaScript
+port of the same six checks, with the test scenarios, a PHI highlighter, redaction previews,
+and an exportable audit trail. You can link straight to a scenario, for example
+`demo-ui.html?theme=dark&run=B2`.
+
+**Live agent (Streamlit):**
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env        # add OPENCODE_API_KEY or OPENROUTER_API_KEY
 streamlit run streamlit_app.py
 ```
 
-Talks to an OpenAI-compatible gateway (OpenCode Go, default base `https://opencode.ai/zen/go/v1`, default model `deepseek-v4.1-flash`; override with `PHI_DEMO_MODEL` / `PHI_DEMO_BASE_URL` — the sidebar also offers a `deepseek-v4.1-flash` / `deepseek-v4-flash` / `glm-5.3-flash` selector). The sidebar's **API key manager** accepts a session-scoped credential: password-masked, validated against the endpoint before use (a quota-capped key is accepted — only auth failures are rejected), and displayed back only as a last-4 + SHA-256 fingerprint. Session default is memory-only; an opt-in checkbox persists the key to the gitignored `.env` (atomic write, `0600` permissions) so it survives refreshes and restarts. Either way the key never appears in logs, the audit trail, exports, or the model-traffic terminal. Requests carry the `x-opencode-session` header and a self-identifying user agent that OpenCode Go requires for routing and prompt caching. Without a key it falls back to deterministic mode and every policy path still works. System prompts are deliberately tool-forward — **the model routes requests; the steering layer, not the prompt, decides.** The console streams dispatch → model output → tool request → steering decision → tool execution live, with a verify-chain button on the audit panel and a break-glass control in the sidebar.
+The app talks to any OpenAI-compatible endpoint. The default is OpenCode Go
+(`https://opencode.ai/zen/go/v1`, model `deepseek-v4.1-flash`). Set `PHI_DEMO_BASE_URL` or
+`PHI_DEMO_MODEL` to use something else, or pick a model from the sidebar. Without a key, the
+app runs in deterministic mode and every policy path still works.
 
-**Tests:** `python -m pytest -q tests`
+You can also paste an API key in the sidebar. It's kept in memory for the session unless you
+choose to save it to `.env`, which is gitignored and written with `0600` permissions. The app
+only ever shows the last four characters and a hash of the key, and the key never appears in
+logs, the audit trail, or exports.
 
-## Known limitations, stated plainly
+The app shows each step as it happens: the model's output, the tool request, the policy
+decision, and the tool result. It also has a button to verify the audit chain and a
+break-glass control in the sidebar.
 
-- **Regex-only PHI detection has recall gaps.** Eleven red-team cases document exactly which encodings slip past — that's a feature of the evaluation, not a bug in the thesis. The fix path (NER layer) is designed for but not wired.
-- The audit chain is session-scoped with an in-memory key. Real deployments need durable keys (KMS/HSM) and append-only storage.
-- Break-glass review queue is a demo of the *workflow*; there's no reviewer UI beyond the queue count and flagged events.
-- Not HIPAA certification, legal advice, or a production authorization layer. It is a concrete artifact for healthcare AI governance conversations: what should be checked, where the check belongs, what gets logged, and how enforceable workflow controls differ from prompt-only safety.
+**Standalone HTTP check (`guardrails/`).** This is a separate, dependency-free copy of the
+engine with a small FastAPI server (`guardrails/server.py`). Other services on the same host
+can `POST /check` before making an external call. It listens on `127.0.0.1:8100` only, and a
+systemd unit file is included.
 
-## How this was built, plainly
+## Limitations
 
-This is a personal learning project. I lean on AI heavily for the implementation. The part I
-actually developed here is the security judgment: deciding which checks belong before a tool
-call rather than after it, reading the source material closely enough to know what a real
-guardrail has to catch, and checking whether the output holds up.
-
-"Velari" shows up in this project's commit history and in the companion kit's source. It was
-a working name I used earlier on. It is not a company, there is no product, and nothing here
-is offered as a service.
-
-It is a companion demo to the public
-[Small Practice Security Kit](https://github.com/itsnmills/small-practice-security-kit),
-covering allowed-purpose checks, PHI-pattern screening, BAA-status gating, and audit logging.
-It is not a separate compliance product.
-
-Release and branch notes:
-
-- Current baseline: [`v0.1.0`](docs/releases/v0.1.0.md)
-- Canonical branch: `main`
-- Branch cleanup plan: [`docs/BRANCH_NORMALIZATION_PLAN.md`](docs/BRANCH_NORMALIZATION_PLAN.md)
-
-## Roadmap
-
-- [ ] NER-based PHI detection layer (Presidio / Comprehend Medical) behind a pluggable interface, with a precision/recall benchmark over a synthetic labeled corpus
-- [ ] Containerized policy sidecar (`/evaluate`, `/verify-audit`) with API keys + rate limits
-- [ ] Simulated SMART-on-FHIR scoped tokens (per-patient scopes, expiry) replacing the role dropdown
-- [ ] OpenTelemetry spans per guardrail decision, correlated with audit event IDs
-- [ ] STRIDE threat model doc mapped to the code
+- PHI detection is regex-based and misses encoded or obfuscated data. The red-team gaps above show exactly which cases. The fix would be an NER layer such as Presidio or Comprehend Medical, which isn't built yet.
+- The audit key is in memory and the log only lasts for the session.
+- Break-glass review stops at a queue count and flagged events. There's no reviewer interface.
+- This isn't a production authorization system, HIPAA certification, or legal advice. It's a working example of where these checks belong in an AI workflow and what they should log.
